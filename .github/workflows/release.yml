@@ -1,0 +1,101 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - 'v*.*.*'
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: Release tag to create
+                required: true
+                default: v0.0.1
+
+permissions:
+    contents: write
+
+jobs:
+    build:
+        name: Build ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        env:
+            RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [windows-latest, macos-latest, ubuntu-latest]
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Verify release version
+              shell: bash
+              run: |
+                  PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+                  if [ "$RELEASE_TAG" != "v$PACKAGE_VERSION" ]; then
+                    echo "Release tag $RELEASE_TAG does not match package.json version $PACKAGE_VERSION."
+                    echo "Update package.json first, then release v$PACKAGE_VERSION."
+                    exit 1
+                  fi
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@v4
+              with:
+                  version: 10.8.0
+
+            - name: Set up Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: pnpm
+
+            - name: Install Linux packaging tools
+              if: runner.os == 'Linux'
+              run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libarchive-tools rpm
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Test
+              run: pnpm test
+
+            - name: Build distributable
+              env:
+                  CSC_IDENTITY_AUTO_DISCOVERY: false
+              run: |
+                  pnpm run build
+                  pnpm exec electron-builder --publish never
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ai-usage-monitor-${{ runner.os }}
+                  path: |
+                      release/*.AppImage
+                      release/*.blockmap
+                      release/*.dmg
+                      release/*.exe
+                      release/*.yml
+                  if-no-files-found: error
+
+    release:
+        name: Publish GitHub Release
+        needs: build
+        runs-on: ubuntu-latest
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+
+        steps:
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: release-artifacts
+                  merge-multiple: true
+
+            - name: Create release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+                  target_commitish: ${{ github.sha }}
+                  files: release-artifacts/*
+                  generate_release_notes: true

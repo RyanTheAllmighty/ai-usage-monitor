@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="icon" type="image/png" href="/favicon.png" />
+        <title>AI Usage Monitor</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                --ink: 224 48% 8%;
+                --mist: 218 35% 93%;
+                --plasma: 168 86% 70%;
+                --orchid: 260 100% 83%;
+                font-family:
+                    Inter,
+                    ui-sans-serif,
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    'Segoe UI',
+                    sans-serif;
+                background: hsl(var(--ink));
+                color: hsl(var(--mist));
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                min-width: 980px;
+                min-height: 680px;
+                overflow: hidden;
+                background:
+                    linear-gradient(115deg, rgba(114, 244, 216, 0.1), transparent 24%),
+                    linear-gradient(245deg, rgba(199, 166, 255, 0.12), transparent 26%),
+                    linear-gradient(135deg, #070b17 0%, #10172d 48%, #07111f 100%);
+            }
+
+            #root,
+            .boot-shell {
+                width: 100vw;
+                height: 100vh;
+            }
+
+            .boot-shell {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
+                background:
+                    radial-gradient(circle at 50% 50%, rgba(114, 244, 216, 0.16), transparent 30%),
+                    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 38%), rgba(7, 12, 24, 0.78);
+            }
+
+            .boot-grid {
+                position: absolute;
+                inset: 0;
+                opacity: 0.34;
+                background-image:
+                    linear-gradient(rgba(233, 238, 247, 0.055) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(233, 238, 247, 0.055) 1px, transparent 1px);
+                background-size: 42px 42px;
+                mask-image: radial-gradient(circle at center, black 0%, black 30%, transparent 72%);
+            }
+
+            .boot-content {
+                position: relative;
+                z-index: 1;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                text-align: center;
+                animation: boot-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+            }
+
+            .boot-close {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                z-index: 2;
+                display: grid;
+                width: 40px;
+                height: 32px;
+                place-items: center;
+                padding: 0;
+                border: 0;
+                border-radius: 8px;
+                color: rgba(233, 238, 247, 0.55);
+                background: transparent;
+                cursor: default;
+                transition:
+                    color 140ms ease,
+                    background 140ms ease;
+                -webkit-app-region: no-drag;
+            }
+
+            .boot-close:hover {
+                color: hsl(var(--ink));
+                background: rgb(251 113 133);
+            }
+
+            .boot-close svg {
+                width: 15px;
+                height: 15px;
+                stroke: currentcolor;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                stroke-width: 2.25;
+            }
+
+            .boot-logo-frame {
+                position: relative;
+                display: grid;
+                width: 112px;
+                height: 112px;
+                place-items: center;
+                overflow: hidden;
+                border: 1px solid rgba(233, 238, 247, 0.26);
+                border-radius: 26px;
+                background:
+                    linear-gradient(135deg, rgba(114, 244, 216, 0.96), rgba(199, 166, 255, 0.98)), hsl(223 44% 13%);
+                box-shadow:
+                    0 26px 76px rgba(114, 244, 216, 0.18),
+                    0 18px 58px rgba(199, 166, 255, 0.14),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+                animation: boot-frame-pulse 2.8s ease-in-out infinite;
+            }
+
+            .boot-logo-frame::before {
+                position: absolute;
+                inset: 9px;
+                content: '';
+                border: 1px solid rgba(5, 12, 24, 0.2);
+                border-radius: 19px;
+                background: rgba(5, 12, 24, 0.2);
+            }
+
+            .boot-monitor {
+                position: relative;
+                width: 78px;
+                height: 50px;
+                overflow: hidden;
+                border-radius: 12px;
+                background:
+                    linear-gradient(rgba(5, 12, 24, 0.2) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(5, 12, 24, 0.18) 1px, transparent 1px);
+                background-size: 14px 14px;
+            }
+
+            .boot-monitor::after {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: -36%;
+                width: 42%;
+                content: '';
+                background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.36), transparent);
+                animation: boot-monitor-scan 1.8s linear infinite;
+            }
+
+            .boot-heartbeat-track {
+                position: absolute;
+                top: 4px;
+                left: -96px;
+                display: flex;
+                width: 288px;
+                height: 42px;
+                animation: boot-heartbeat-sweep 1.8s linear infinite;
+            }
+
+            .boot-heartbeat {
+                width: 96px;
+                height: 42px;
+                flex: 0 0 96px;
+                fill: none;
+                stroke: hsl(var(--ink));
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                stroke-width: 7;
+            }
+
+            .boot-heartbeat-shadow {
+                top: 7px;
+                opacity: 0.2;
+                filter: blur(5px);
+            }
+
+            .boot-heartbeat-shadow .boot-heartbeat {
+                stroke: white;
+                stroke-width: 10;
+            }
+
+            .boot-title {
+                margin-top: 28px;
+                font-size: 24px;
+                font-weight: 650;
+                line-height: 1.2;
+            }
+
+            @keyframes boot-enter {
+                from {
+                    opacity: 0;
+                    transform: translateY(14px) scale(0.985);
+                }
+
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+
+            @keyframes boot-heartbeat-sweep {
+                from {
+                    transform: translateX(0);
+                }
+
+                to {
+                    transform: translateX(96px);
+                }
+            }
+
+            @keyframes boot-monitor-scan {
+                from {
+                    transform: translateX(0);
+                }
+
+                to {
+                    transform: translateX(320%);
+                }
+            }
+
+            @keyframes boot-frame-pulse {
+                0%,
+                100% {
+                    transform: translateY(0);
+                }
+
+                50% {
+                    transform: translateY(-2px);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div id="root">
+            <main class="boot-shell" aria-label="AI Usage Monitor is loading">
+                <div class="boot-grid"></div>
+                <button class="boot-close" type="button" title="Close to tray" aria-label="Close to tray">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M18 6 6 18"></path>
+                        <path d="m6 6 12 12"></path>
+                    </svg>
+                </button>
+                <section class="boot-content">
+                    <div class="boot-logo-frame">
+                        <div class="boot-monitor">
+                            <div class="boot-heartbeat-track boot-heartbeat-shadow" aria-hidden="true">
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                            </div>
+                            <div class="boot-heartbeat-track" aria-hidden="true">
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                                <svg class="boot-heartbeat" viewBox="0 0 96 42">
+                                    <path d="M0 22H18L29 12L40 34L56 4L72 22H96"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="boot-title">AI Usage Monitor</div>
+                </section>
+            </main>
+        </div>
+        <script>
+            document.querySelector('.boot-close')?.addEventListener('click', () => {
+                window.aiUsageMonitor?.windowAction('close');
+            });
+        </script>
+        <script type="module" src="./main.tsx"></script>
+    </body>
+</html>

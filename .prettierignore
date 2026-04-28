@@ -1,0 +1,15 @@
+dist
+dist-electron
+node_modules
+out
+release
+.vite
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+assets/*.ico
+assets/*.icns
+assets/*.png
+public/*.png
+worker-configuration.d.ts

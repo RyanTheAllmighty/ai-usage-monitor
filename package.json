@@ -1,0 +1,123 @@
+{
+    "name": "ai-usage-monitor",
+    "version": "0.0.1",
+    "description": "A local-first desktop tray app for monitoring AI provider usage.",
+    "author": "AI Usage Monitor",
+    "main": "out/main/index.js",
+    "type": "module",
+    "packageManager": "pnpm@10.8.0",
+    "scripts": {
+        "preinstall": "node ./scripts/only-pnpm.mjs",
+        "prepare": "husky",
+        "predev": "node ./scripts/only-pnpm.mjs",
+        "dev": "electron-vite dev",
+        "prebuild": "node ./scripts/only-pnpm.mjs",
+        "build": "tsc --noEmit && electron-vite build",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint .",
+        "lint:fix": "eslint . --fix",
+        "format": "prettier . --write",
+        "format:check": "prettier . --check",
+        "verify": "pnpm run lint && pnpm run format:check && pnpm run test && pnpm run build",
+        "prepreview": "node ./scripts/only-pnpm.mjs",
+        "preview": "electron-vite preview",
+        "pretest": "node ./scripts/only-pnpm.mjs",
+        "test": "vitest run",
+        "prepack": "node ./scripts/only-pnpm.mjs",
+        "pack": "pnpm run build && electron-builder --dir",
+        "predist": "node ./scripts/only-pnpm.mjs",
+        "dist": "pnpm run build && electron-builder"
+    },
+    "dependencies": {
+        "@radix-ui/react-alert-dialog": "^1.1.15",
+        "@radix-ui/react-select": "^2.2.6",
+        "@radix-ui/react-slot": "^1.2.4",
+        "@radix-ui/react-switch": "^1.2.6",
+        "@radix-ui/react-tooltip": "^1.2.8",
+        "@tanstack/react-query": "^5.100.5",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
+        "electron-updater": "^6.8.3",
+        "framer-motion": "^12.23.24",
+        "lucide-react": "^1.11.0",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "recharts": "^3.5.1",
+        "sonner": "^2.0.7",
+        "sql.js": "^1.13.0",
+        "tailwind-merge": "^3.4.0",
+        "zod": "^4.1.13"
+    },
+    "devDependencies": {
+        "@commitlint/cli": "^20.5.2",
+        "@commitlint/config-conventional": "^20.5.0",
+        "@electron-toolkit/preload": "^3.0.2",
+        "@electron-toolkit/utils": "^4.0.0",
+        "@eslint/js": "^9.39.4",
+        "@tailwindcss/postcss": "^4.2.4",
+        "@types/node": "^25.6.0",
+        "@types/pngjs": "^6.0.5",
+        "@types/react": "^19.2.7",
+        "@types/react-dom": "^19.2.3",
+        "@types/sql.js": "^1.4.11",
+        "@vitejs/plugin-react": "^5.2.0",
+        "@vitest/eslint-plugin": "^1.6.16",
+        "electron": "^41.3.0",
+        "electron-builder": "^26.0.12",
+        "electron-vite": "^5.0.0",
+        "eslint": "^9.39.4",
+        "eslint-plugin-perfectionist": "^5.9.0",
+        "eslint-plugin-react": "^7.37.5",
+        "eslint-plugin-react-compiler": "19.1.0-rc.2",
+        "eslint-plugin-react-hooks": "^7.1.1",
+        "eslint-plugin-react-refresh": "^0.5.2",
+        "eslint-plugin-unused-imports": "^4.4.1",
+        "globals": "^17.5.0",
+        "husky": "^9.1.7",
+        "lint-staged": "^16.4.0",
+        "png-to-ico": "^3.0.1",
+        "pngjs": "^7.0.0",
+        "postcss": "^8.5.6",
+        "prettier": "^3.8.3",
+        "prettier-plugin-tailwindcss": "^0.8.0",
+        "tailwindcss": "^4.2.4",
+        "typescript": "^6.0.3",
+        "typescript-eslint": "^8.59.1",
+        "vite": "^8.0.10",
+        "vitest": "^4.0.15"
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "electron",
+            "electron-winstaller",
+            "esbuild"
+        ]
+    },
+    "build": {
+        "appId": "com.aiusagemonitor.desktop",
+        "productName": "AI Usage Monitor",
+        "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "out/**",
+            "assets/**",
+            "node_modules/sql.js/dist/sql-wasm.wasm"
+        ],
+        "icon": "assets/icon",
+        "win": {
+            "target": "nsis",
+            "icon": "assets/icon.ico"
+        },
+        "mac": {
+            "target": "dmg",
+            "icon": "assets/icon.icns"
+        },
+        "linux": {
+            "target": "AppImage",
+            "icon": "assets/icon.png",
+            "category": "Utility"
+        }
+    }
+}
