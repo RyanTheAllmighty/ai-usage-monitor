@@ -14,6 +14,18 @@ let mainWindow: BrowserWindow | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 let scheduledRefreshRunning = false;
 let isQuitting = false;
+let shouldShowWhenReady = false;
+
+function showMainWindow(): void {
+    if (!mainWindow) {
+        shouldShowWhenReady = true;
+        return;
+    }
+
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+}
 
 function createWindow(): BrowserWindow {
     const screenshotSize = getScreenshotWindowSize();
@@ -245,29 +257,38 @@ function isProviderDueOnAlignedInterval(
     return !lastSyncedAt || lastSyncedAt < currentIntervalBoundary;
 }
 
-app.whenReady().then(async () => {
-    const userDataPath = process.env.AI_USAGE_MONITOR_USER_DATA_DIR;
-    if (userDataPath) app.setPath('userData', userDataPath);
-
-    await db.init();
-    registerIpc();
-    const settings = db.getSettings();
-    app.setLoginItemSettings({
-        openAtLogin: settings.startAtLogin,
-        openAsHidden: settings.launchMinimized,
+if (!app.requestSingleInstanceLock()) {
+    app.quit();
+} else {
+    app.on('second-instance', () => {
+        showMainWindow();
     });
-    createWindow();
-    createTray(() => mainWindow);
-    scheduleRefreshes();
 
-    app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
+    app.whenReady().then(async () => {
+        const userDataPath = process.env.AI_USAGE_MONITOR_USER_DATA_DIR;
+        if (userDataPath) app.setPath('userData', userDataPath);
 
-    app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-        else mainWindow?.show();
+        await db.init();
+        registerIpc();
+        const settings = db.getSettings();
+        app.setLoginItemSettings({
+            openAtLogin: settings.startAtLogin,
+            openAsHidden: settings.launchMinimized,
+        });
+        createWindow();
+        createTray(() => mainWindow);
+        scheduleRefreshes();
+        if (shouldShowWhenReady) showMainWindow();
+
+        app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
+
+        app.on('activate', () => {
+            if (BrowserWindow.getAllWindows().length === 0) createWindow();
+            else showMainWindow();
+        });
     });
-});
 
-app.on('before-quit', () => {
-    isQuitting = true;
-});
+    app.on('before-quit', () => {
+        isQuitting = true;
+    });
+}
