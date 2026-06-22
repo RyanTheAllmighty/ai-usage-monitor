@@ -11,6 +11,14 @@ import { createTray, rebuildTrayMenu } from './tray';
 import { clearProviderSession, loginProvider, refreshAllProviders, refreshProvider } from './providers';
 import { PROVIDER_DEFINITIONS, type CreateProviderInput, type UpdateProviderInput } from '../shared/types';
 
+const APP_NAME_PROD = 'AI Usage Monitor';
+const APP_NAME_DEV = 'AI Usage Monitor (Dev)';
+const APP_DISPLAY_NAME = app.isPackaged ? APP_NAME_PROD : APP_NAME_DEV;
+
+if (!app.isPackaged) {
+    app.setName(APP_NAME_DEV);
+}
+
 let mainWindow: BrowserWindow | null = null;
 let refreshTimer: NodeJS.Timeout | null = null;
 let scheduledRefreshRunning = false;
@@ -38,7 +46,7 @@ function createWindow(): BrowserWindow {
         minHeight: 680,
         frame: false,
         show: false,
-        title: 'AI Usage Monitor',
+        title: APP_DISPLAY_NAME,
         icon: path.join(app.getAppPath(), 'assets', 'icon.png'),
         backgroundColor: '#080d1b',
         webPreferences: {

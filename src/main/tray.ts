@@ -12,7 +12,7 @@ let tray: Tray | null = null;
 export function createTray(getWindow: () => BrowserWindow | null): Tray {
     const icon = createTrayIcon();
     tray = new Tray(icon);
-    tray.setToolTip('AI Usage Monitor');
+    tray.setToolTip(app.isPackaged ? 'AI Usage Monitor' : 'AI Usage Monitor (Dev)');
     tray.on('click', () => {
         const win = getWindow();
         if (!win) return;
