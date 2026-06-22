@@ -50,6 +50,7 @@ export interface SettingsRecord {
     notificationsEnabled: boolean;
     theme: 'dark' | 'light' | 'system';
     defaultRefreshIntervalMinutes: number;
+    defaultHistoryDays: number;
     developmentMode: boolean;
 }
 

@@ -718,12 +718,17 @@ function Providers({
 function HistoryView({ state }: { state: AppState }): ReactElement {
     const queryClient = useQueryClient();
     const [providerId, setProviderId] = useState<string>('all');
+    const [days, setDays] = useState<number>(state.settings.defaultHistoryDays ?? 30);
     const providerLookup = useMemo(
         () => new Map(state.providers.map((provider) => [provider.id, provider])),
         [state.providers],
     );
-    const filteredHistory =
-        providerId === 'all' ? state.history : state.history.filter((snapshot) => snapshot.providerId === providerId);
+    const cutoff = useMemo(() => Date.now() - days * 86_400_000, [days]);
+    const filteredHistory = state.history.filter((snapshot) => {
+        const inRange = new Date(snapshot.capturedAt).getTime() >= cutoff;
+        const inProvider = providerId === 'all' || snapshot.providerId === providerId;
+        return inRange && inProvider;
+    });
     const chartData = useMemo(
         () => buildHistoryChartData(filteredHistory, providerLookup),
         [filteredHistory, providerLookup],
@@ -748,19 +753,31 @@ function HistoryView({ state }: { state: AppState }): ReactElement {
                 eyebrow="History"
                 title="Detailed local ledger"
                 action={
-                    <Select value={providerId} onValueChange={setProviderId}>
-                        <SelectTrigger className="w-56">
-                            <SelectValue placeholder="Provider" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">All providers</SelectItem>
-                            {state.providers.map((provider) => (
-                                <SelectItem key={provider.id} value={provider.id}>
-                                    {provider.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
+                    <div className="flex items-center gap-2">
+                        <Select value={String(days)} onValueChange={(value) => setDays(Number(value))}>
+                            <SelectTrigger className="w-36">
+                                <SelectValue placeholder="Range" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="30">Last 30 days</SelectItem>
+                                <SelectItem value="15">Last 15 days</SelectItem>
+                                <SelectItem value="7">Last 7 days</SelectItem>
+                            </SelectContent>
+                        </Select>
+                        <Select value={providerId} onValueChange={setProviderId}>
+                            <SelectTrigger className="w-56">
+                                <SelectValue placeholder="Provider" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All providers</SelectItem>
+                                {state.providers.map((provider) => (
+                                    <SelectItem key={provider.id} value={provider.id}>
+                                        {provider.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
                 }
             />
             <div className="mt-6 h-80 rounded-lg border border-white/10 bg-white/[0.045] p-5">
@@ -1204,7 +1221,7 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
                     value={settings.developmentMode}
                     onClick={() => toggle('developmentMode')}
                 />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                     <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
                         Default refresh interval
                         <Input
@@ -1227,6 +1244,22 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
                                 <SelectItem value="dark">Dark</SelectItem>
                                 <SelectItem value="light">Light</SelectItem>
                                 <SelectItem value="system">System</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </label>
+                    <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
+                        Default history range
+                        <Select
+                            value={String(settings.defaultHistoryDays ?? 30)}
+                            onValueChange={(value) => update.mutate({ defaultHistoryDays: Number(value) })}
+                        >
+                            <SelectTrigger>
+                                <SelectValue placeholder="Range" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="30">30 days</SelectItem>
+                                <SelectItem value="15">15 days</SelectItem>
+                                <SelectItem value="7">7 days</SelectItem>
                             </SelectContent>
                         </Select>
                     </label>

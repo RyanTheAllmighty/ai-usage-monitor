@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: SettingsRecord = {
     notificationsEnabled: true,
     theme: 'system',
     defaultRefreshIntervalMinutes: 15,
+    defaultHistoryDays: 30,
     developmentMode: false,
 };
 
