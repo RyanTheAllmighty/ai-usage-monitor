@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
 import { Toaster, toast } from 'sonner';
+import type { UpdateState } from '../shared/ipc';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -37,6 +38,7 @@ import {
     Pencil,
     Plus,
     Power,
+    Package,
     RefreshCw,
     Settings,
     Shield,
@@ -84,6 +86,7 @@ export function App(): ReactElement {
     const [adding, setAdding] = useState(false);
     const [navCollapsed, setNavCollapsed] = useState(false);
     const [editingProvider, setEditingProvider] = useState<ProviderWithSnapshot | null>(null);
+    const [updateState, setUpdateState] = useState<UpdateState | null>(null);
 
     const stateQuery = useQuery({
         queryKey: ['app-state'],
@@ -131,6 +134,38 @@ export function App(): ReactElement {
     });
 
     const isInitialLoading = stateQuery.isLoading || !state;
+
+    useEffect(() => {
+        let cancelled = false;
+        void api.getUpdateState().then((initial) => {
+            if (!cancelled) setUpdateState(initial);
+        });
+        const unsubscribe = api.onUpdateState((next) => setUpdateState(next));
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!updateState) return;
+        const status = updateState.status;
+        const message = updateState.message;
+        if (status === 'available' && message) {
+            toast.info(message);
+        } else if (status === 'downloaded' && message) {
+            toast.success(message, {
+                duration: 30_000,
+                action: {
+                    label: 'Restart & install',
+                    onClick: () => void api.installUpdate(),
+                },
+            });
+        } else if (status === 'error' && message) {
+            toast.error(message);
+        }
+    }, [updateState]);
+
     const totals = useMemo(() => summarize(state), [state]);
     const currentView = state && !state.settings.developmentMode && view === 'developer-logs' ? 'settings' : view;
 
@@ -275,7 +310,9 @@ export function App(): ReactElement {
                                 )}
                                 {currentView === 'history' && <HistoryView state={state} />}
                                 {currentView === 'developer-logs' && <DeveloperLogsView state={state} />}
-                                {currentView === 'settings' && <SettingsView settings={state.settings} />}
+                                {currentView === 'settings' && (
+                                    <SettingsView settings={state.settings} updateState={updateState} />
+                                )}
                             </motion.div>
                         </main>
                     </div>
@@ -1162,7 +1199,13 @@ function LogPanel({ title, value }: { title: string; value: unknown }): ReactEle
     );
 }
 
-function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement {
+function SettingsView({
+    settings,
+    updateState,
+}: {
+    settings: SettingsRecord;
+    updateState: UpdateState | null;
+}): ReactElement {
     const queryClient = useQueryClient();
     const update = useMutation({
         mutationFn: api.updateSettings,
@@ -1191,9 +1234,55 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
         },
         onError: (error) => toast.error(error instanceof Error ? error.message : 'Import failed.'),
     });
+    const checkUpdate = useMutation({
+        mutationFn: api.checkForUpdates,
+        onSuccess: (result) => {
+            if (!result.ok && result.reason) toast.error(result.reason);
+        },
+        onError: (error) => toast.error(error instanceof Error ? error.message : 'Update check failed.'),
+    });
+    const installUpdate = useMutation({
+        mutationFn: api.installUpdate,
+        onError: (error) => toast.error(error instanceof Error ? error.message : 'Install failed.'),
+    });
+    const simulateUpdate = useMutation({
+        mutationFn: api.simulateUpdateState,
+    });
 
     const toggle = (key: keyof SettingsRecord) => {
         update.mutate({ [key]: !settings[key] });
+    };
+
+    const updateStatus = updateState?.status ?? 'unsupported';
+    const updateStatusText = (() => {
+        if (updateStatus === 'unsupported') return 'Updates are only available in packaged builds.';
+        if (updateStatus === 'checking') return 'Checking for updates…';
+        if (updateStatus === 'downloading') {
+            const pct = updateState?.progressPercent;
+            return pct == null ? 'Downloading update…' : `Downloading update… ${pct}%`;
+        }
+        if (updateStatus === 'downloaded') return 'Restart to finish installing the update.';
+        if (updateStatus === 'error') return updateState?.message ?? 'Update check failed.';
+        if (updateState?.message) return updateState.message;
+        return `You're on version ${updateState?.currentVersion ?? '0.0.0'}.`;
+    })();
+    const canCheck =
+        updateStatus === 'idle' ||
+        updateStatus === 'unsupported' ||
+        updateStatus === 'error' ||
+        updateState?.simulator === true;
+
+    const animateSimulatedDownload = () => {
+        let percent = 0;
+        const timer = setInterval(() => {
+            percent = Math.min(100, percent + 5);
+            void api.simulateUpdateState({
+                status: 'downloading',
+                availableVersion: '9.9.9',
+                progressPercent: percent,
+            });
+            if (percent >= 100) clearInterval(timer);
+        }, 150);
     };
 
     return (
@@ -1228,6 +1317,147 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
                     value={settings.developmentMode}
                     onClick={() => toggle('developmentMode')}
                 />
+                <SettingRow
+                    icon={Package}
+                    label="Application updates"
+                    description={updateStatusText}
+                    action={
+                        updateStatus === 'downloaded' ? (
+                            <Button onClick={() => installUpdate.mutate()} disabled={installUpdate.isPending}>
+                                {installUpdate.isPending ? (
+                                    <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                    <RefreshCw size={16} />
+                                )}
+                                Restart & install
+                            </Button>
+                        ) : (
+                            <Button
+                                variant="secondary"
+                                onClick={() => checkUpdate.mutate()}
+                                disabled={!canCheck || checkUpdate.isPending}
+                            >
+                                {checkUpdate.isPending || updateStatus === 'checking' ? (
+                                    <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                    <Download size={16} />
+                                )}
+                                Check for updates
+                            </Button>
+                        )
+                    }
+                >
+                    <div className="flex flex-col gap-3 text-sm text-mist/55">
+                        <div>
+                            Current version{' '}
+                            <span className="text-mist/80">v{updateState?.currentVersion ?? '0.0.0'}</span>
+                            {updateState?.availableVersion &&
+                                updateState.availableVersion !== updateState.currentVersion && (
+                                    <>
+                                        {' '}
+                                        · Latest <span className="text-mist/80">v{updateState.availableVersion}</span>
+                                    </>
+                                )}
+                        </div>
+                        {updateStatus === 'downloading' && updateState?.progressPercent != null && (
+                            <div>
+                                <div className="mb-1 flex items-center justify-between text-xs text-mist/45">
+                                    <span>Downloading…</span>
+                                    <span>{updateState.progressPercent}%</span>
+                                </div>
+                                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                                    <div
+                                        className="h-full rounded-full bg-gradient-to-r from-plasma to-orchid transition-[width]"
+                                        style={{ width: `${updateState.progressPercent}%` }}
+                                    />
+                                </div>
+                            </div>
+                        )}
+                        {settings.developmentMode && updateState?.simulator && (
+                            <div className="rounded-md border border-plasma/20 bg-plasma/[0.06] p-3">
+                                <div className="mb-2 text-xs text-plasma/70 uppercase">Dev simulator</div>
+                                <div className="flex flex-wrap gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() =>
+                                            simulateUpdate.mutate({
+                                                status: 'idle',
+                                                availableVersion: null,
+                                                progressPercent: null,
+                                                message: null,
+                                            })
+                                        }
+                                    >
+                                        Idle
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() => simulateUpdate.mutate({ status: 'checking', message: null })}
+                                    >
+                                        Checking
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() =>
+                                            simulateUpdate.mutate({
+                                                status: 'available',
+                                                availableVersion: '9.9.9',
+                                                message: 'A new version is available. Downloading in the background…',
+                                            })
+                                        }
+                                    >
+                                        Available 9.9.9
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() =>
+                                            simulateUpdate.mutate({
+                                                status: 'downloading',
+                                                availableVersion: '9.9.9',
+                                                progressPercent: 50,
+                                            })
+                                        }
+                                    >
+                                        Downloading 50%
+                                    </Button>
+                                    <Button size="sm" variant="secondary" onClick={animateSimulatedDownload}>
+                                        Animate download
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() =>
+                                            simulateUpdate.mutate({
+                                                status: 'downloaded',
+                                                availableVersion: '9.9.9',
+                                                progressPercent: 100,
+                                                message: 'Version 9.9.9 is ready to install.',
+                                            })
+                                        }
+                                    >
+                                        Downloaded 9.9.9
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="secondary"
+                                        onClick={() =>
+                                            simulateUpdate.mutate({
+                                                status: 'error',
+                                                message: 'Simulated network error during update check.',
+                                            })
+                                        }
+                                    >
+                                        Error
+                                    </Button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </SettingRow>
                 <div className="grid grid-cols-3 gap-3">
                     <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
                         Default refresh interval
@@ -1892,25 +2122,33 @@ function SettingRow({
     description,
     value,
     onClick,
+    action,
+    children,
 }: {
     icon: typeof Power;
     label: string;
     description: string;
-    value: boolean;
-    onClick: () => void;
+    value?: boolean;
+    onClick?: () => void;
+    action?: ReactNode;
+    children?: ReactNode;
 }): ReactElement {
     return (
-        <div className="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.045] p-5 text-left">
-            <div className="flex items-center gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-lg bg-white/[0.07]">
-                    <Icon size={18} className="text-plasma" />
+        <div className="rounded-lg border border-white/10 bg-white/[0.045] p-5 text-left">
+            <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="grid h-11 w-11 place-items-center rounded-lg bg-white/[0.07]">
+                        <Icon size={18} className="text-plasma" />
+                    </div>
+                    <div>
+                        <div className="font-medium">{label}</div>
+                        <div className="mt-1 text-sm text-mist/45">{description}</div>
+                    </div>
                 </div>
-                <div>
-                    <div className="font-medium">{label}</div>
-                    <div className="mt-1 text-sm text-mist/45">{description}</div>
-                </div>
+                {action ??
+                    (value !== undefined ? <Switch checked={value} onCheckedChange={() => onClick?.()} /> : null)}
             </div>
-            <Switch checked={value} onCheckedChange={onClick} />
+            {children && <div className="mt-4 border-t border-white/10 pt-4">{children}</div>}
         </div>
     );
 }

@@ -76,6 +76,7 @@ export interface AppState {
     providers: ProviderWithSnapshot[];
     settings: SettingsRecord;
     history: UsageSnapshot[];
+    appVersion: string;
 }
 
 export interface CreateProviderInput {

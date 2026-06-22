@@ -100,6 +100,12 @@
         "directories": {
             "output": "release"
         },
+        "publish": {
+            "provider": "github",
+            "owner": "RyanTheAllmighty",
+            "repo": "ai-usage-monitor",
+            "releaseType": "release"
+        },
         "files": [
             "out/**",
             "assets/**",

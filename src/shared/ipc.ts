@@ -8,9 +8,26 @@ import type {
     UsageSnapshot,
 } from './types';
 
+export type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'unsupported' | 'error';
+
+export interface UpdateState {
+    status: UpdateStatus;
+    currentVersion: string;
+    availableVersion: string | null;
+    progressPercent: number | null;
+    message: string | null;
+    simulator: boolean;
+}
+
 export interface LedgerImportResult {
     providers: number;
     history: number;
+}
+
+export interface UpdateCheckResult {
+    ok: boolean;
+    reason?: string;
+    state: UpdateState;
 }
 
 export interface AiUsageMonitorApi {
@@ -35,6 +52,11 @@ export interface AiUsageMonitorApi {
     clearAllData(): Promise<void>;
     windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<boolean>;
     openExternal(url: string): Promise<void>;
+    getUpdateState(): Promise<UpdateState>;
+    checkForUpdates(): Promise<UpdateCheckResult>;
+    installUpdate(): Promise<{ ok: boolean }>;
+    simulateUpdateState(partial: Partial<UpdateState>): Promise<void>;
+    onUpdateState(callback: (state: UpdateState) => void): () => void;
 }
 
 export const IPC_CHANNELS = {
@@ -59,4 +81,9 @@ export const IPC_CHANNELS = {
     clearAllData: 'ledger:clear-all-data',
     windowAction: 'window:action',
     openExternal: 'shell:open-external',
+    getUpdateState: 'updater:get-state',
+    checkForUpdates: 'updater:check',
+    installUpdate: 'updater:install',
+    simulateUpdateState: 'updater:simulate',
+    updateStateChanged: 'updater:state-changed',
 } as const;

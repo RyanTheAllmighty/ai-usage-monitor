@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AiUsageMonitorApi } from '../shared/ipc';
+import type { AiUsageMonitorApi, UpdateState } from '../shared/ipc';
 
 import { IPC_CHANNELS } from '../shared/ipc';
 
@@ -25,6 +25,15 @@ const api: AiUsageMonitorApi = {
     clearAllData: () => ipcRenderer.invoke(IPC_CHANNELS.clearAllData),
     windowAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.windowAction, action),
     openExternal: (url) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, url),
+    getUpdateState: () => ipcRenderer.invoke(IPC_CHANNELS.getUpdateState),
+    checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.checkForUpdates),
+    installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.installUpdate),
+    simulateUpdateState: (partial) => ipcRenderer.invoke(IPC_CHANNELS.simulateUpdateState, partial),
+    onUpdateState: (callback: (state: UpdateState) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, state: UpdateState) => callback(state);
+        ipcRenderer.on(IPC_CHANNELS.updateStateChanged, listener);
+        return () => ipcRenderer.removeListener(IPC_CHANNELS.updateStateChanged, listener);
+    },
 };
 
 contextBridge.exposeInMainWorld('aiUsageMonitor', api);

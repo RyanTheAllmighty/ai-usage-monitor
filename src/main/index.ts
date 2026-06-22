@@ -6,10 +6,11 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { db } from './database';
 import { vault } from './secrets';
-import { IPC_CHANNELS } from '../shared/ipc';
 import { createTray, rebuildTrayMenu } from './tray';
+import { IPC_CHANNELS, type UpdateState } from '../shared/ipc';
 import { clearProviderSession, loginProvider, refreshAllProviders, refreshProvider } from './providers';
 import { PROVIDER_DEFINITIONS, type CreateProviderInput, type UpdateProviderInput } from '../shared/types';
+import { checkForUpdates, getUpdateState, installUpdate, setupAutoUpdater, simulateUpdateState } from './updater';
 
 const APP_NAME_PROD = 'AI Usage Monitor';
 const APP_NAME_DEV = 'AI Usage Monitor (Dev)';
@@ -110,6 +111,7 @@ function registerIpc(): void {
         providers: db.listProvidersWithSnapshots(),
         settings: db.getSettings(),
         history: db.getHistory(),
+        appVersion: app.getVersion(),
     }));
 
     ipcMain.handle(IPC_CHANNELS.createProvider, (_event, input: CreateProviderInput) => {
@@ -272,6 +274,18 @@ function registerIpc(): void {
         rebuildTrayMenu(() => mainWindow);
     });
     ipcMain.handle(IPC_CHANNELS.openExternal, (_event, url: string) => shell.openExternal(url));
+    ipcMain.handle(IPC_CHANNELS.getUpdateState, () => getUpdateState());
+    ipcMain.handle(IPC_CHANNELS.checkForUpdates, () => {
+        const result = checkForUpdates();
+        return { ...result, state: getUpdateState() };
+    });
+    ipcMain.handle(IPC_CHANNELS.installUpdate, () => {
+        installUpdate();
+        return { ok: true };
+    });
+    ipcMain.handle(IPC_CHANNELS.simulateUpdateState, (_event, partial: Partial<UpdateState>) => {
+        simulateUpdateState(partial);
+    });
     ipcMain.handle(IPC_CHANNELS.windowAction, (_event, action: 'minimize' | 'maximize' | 'close') => {
         if (!mainWindow) return false;
         if (action === 'minimize') mainWindow.minimize();
@@ -340,6 +354,7 @@ if (!app.requestSingleInstanceLock()) {
         createWindow();
         createTray(() => mainWindow);
         scheduleRefreshes();
+        setupAutoUpdater();
         if (shouldShowWhenReady) showMainWindow();
 
         app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window));
