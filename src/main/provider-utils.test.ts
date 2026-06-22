@@ -186,4 +186,54 @@ describe('provider-utils', () => {
             { label: 'Weekly remaining', value: '51.0%', tone: 'good', tooltip: expect.any(String) },
         ]);
     });
+
+    it('parses OpenCode Zen credits and Go quotas from dashboard text', () => {
+        const parsed = parsePortalText(
+            { id: 'opencode-1', kind: 'opencode' },
+            'OpenCode account Zen balance $42.50 Zen spend $7.25 Zen debit $7.25 Go 5-hour 80% remaining Go weekly 55% remaining Go monthly 90% remaining',
+            'https://opencode.ai/account',
+        );
+
+        expect(parsed.status).toBe('healthy');
+        expect(parsed.remainingUsd).toBe(42.5);
+        expect(parsed.spendUsd).toBe(7.25);
+        expect(parsed.usagePercent).toBe(45);
+        expect(parsed.metrics).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ label: 'Zen balance', value: '$42.50' }),
+                expect.objectContaining({ label: 'Zen spend', value: '$7.25' }),
+                expect.objectContaining({ label: 'Go 5-hour remaining', value: '80.0%' }),
+                expect.objectContaining({ label: 'Go weekly remaining', value: '55.0%' }),
+                expect.objectContaining({ label: 'Go monthly remaining', value: '90.0%' }),
+            ]),
+        );
+    });
+
+    it('flags an OpenCode warning when a Go quota is nearly exhausted', () => {
+        const parsed = parsePortalText(
+            { id: 'opencode-1', kind: 'opencode' },
+            'Zen balance $42.50 Go weekly 12% remaining',
+            'https://opencode.ai/account',
+        );
+
+        expect(parsed.status).toBe('warning');
+    });
+
+    it('flags an OpenCode warning when Zen balance reaches the alert threshold', () => {
+        const parsed = parsePortalText(
+            { id: 'opencode-1', kind: 'opencode' },
+            'Zen balance $1.00 Go weekly 80% remaining',
+            'https://opencode.ai/account',
+            { alertCreditRemaining: 2 },
+        );
+
+        expect(parsed.status).toBe('warning');
+    });
+
+    it('detects OpenCode login screens', () => {
+        const parsed = parsePortalText({ id: 'opencode-1', kind: 'opencode' }, 'Sign in to continue with OpenCode');
+
+        expect(parsed.status).toBe('needs-login');
+        expect(parsed.metrics[0].value).toBe('Needs login');
+    });
 });

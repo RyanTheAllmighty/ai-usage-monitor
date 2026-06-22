@@ -729,6 +729,10 @@ function HistoryView({ state }: { state: AppState }): ReactElement {
         [filteredHistory, providerLookup],
     );
     const hasCodexQuotaSeries = chartData.some((point) => point.codexFiveHour != null || point.codexWeekly != null);
+    const hasOpenCodeQuotaSeries = chartData.some(
+        (point) => point.opencodeFiveHour != null || point.opencodeWeekly != null || point.opencodeMonthly != null,
+    );
+    const hasQuotaSeries = hasCodexQuotaSeries || hasOpenCodeQuotaSeries;
     const deleteSnapshot = useMutation({
         mutationFn: api.deleteHistorySnapshot,
         onSuccess: () => {
@@ -787,7 +791,7 @@ function HistoryView({ state }: { state: AppState }): ReactElement {
                             yAxisId="quota"
                             orientation="right"
                             domain={[0, 100]}
-                            hide={!hasCodexQuotaSeries}
+                            hide={!hasQuotaSeries}
                             stroke="rgba(233,238,247,0.45)"
                             tickLine={false}
                             axisLine={false}
@@ -831,6 +835,40 @@ function HistoryView({ state }: { state: AppState }): ReactElement {
                             dot={false}
                             connectNulls
                         />
+                        {hasOpenCodeQuotaSeries && (
+                            <>
+                                <Line
+                                    yAxisId="quota"
+                                    type="monotone"
+                                    dataKey="opencodeFiveHour"
+                                    name="OpenCode Go 5-hour"
+                                    stroke="#fbbf24"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    connectNulls
+                                />
+                                <Line
+                                    yAxisId="quota"
+                                    type="monotone"
+                                    dataKey="opencodeWeekly"
+                                    name="OpenCode Go weekly"
+                                    stroke="#f472b6"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    connectNulls
+                                />
+                                <Line
+                                    yAxisId="quota"
+                                    type="monotone"
+                                    dataKey="opencodeMonthly"
+                                    name="OpenCode Go monthly"
+                                    stroke="#34d399"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    connectNulls
+                                />
+                            </>
+                        )}
                     </ComposedChart>
                 </ResponsiveContainer>
             </div>
@@ -901,6 +939,9 @@ interface HistoryChartPoint {
     totalSpend: number;
     codexFiveHour: number | null;
     codexWeekly: number | null;
+    opencodeFiveHour: number | null;
+    opencodeWeekly: number | null;
+    opencodeMonthly: number | null;
 }
 
 function buildHistoryChartData(
@@ -910,6 +951,9 @@ function buildHistoryChartData(
     const latestSpendByProvider = new Map<string, number>();
     const latestCodexFiveHourByProvider = new Map<string, number>();
     const latestCodexWeeklyByProvider = new Map<string, number>();
+    const latestOpencodeFiveHourByProvider = new Map<string, number>();
+    const latestOpencodeWeeklyByProvider = new Map<string, number>();
+    const latestOpencodeMonthlyByProvider = new Map<string, number>();
 
     return history
         .slice()
@@ -928,11 +972,25 @@ function buildHistoryChartData(
                 if (weeklyRemaining != null) latestCodexWeeklyByProvider.set(snapshot.providerId, weeklyRemaining);
             }
 
+            if (provider?.kind === 'opencode') {
+                const fiveHourRemaining = readMetricPercent(snapshot.metrics, 'go 5-hour');
+                const weeklyRemaining = readMetricPercent(snapshot.metrics, 'go weekly');
+                const monthlyRemaining = readMetricPercent(snapshot.metrics, 'go monthly');
+                if (fiveHourRemaining != null)
+                    latestOpencodeFiveHourByProvider.set(snapshot.providerId, fiveHourRemaining);
+                if (weeklyRemaining != null) latestOpencodeWeeklyByProvider.set(snapshot.providerId, weeklyRemaining);
+                if (monthlyRemaining != null)
+                    latestOpencodeMonthlyByProvider.set(snapshot.providerId, monthlyRemaining);
+            }
+
             return {
                 time: formatShortDate(snapshot.capturedAt),
                 totalSpend: sumValues(latestSpendByProvider),
                 codexFiveHour: lowestValue(latestCodexFiveHourByProvider),
                 codexWeekly: lowestValue(latestCodexWeeklyByProvider),
+                opencodeFiveHour: lowestValue(latestOpencodeFiveHourByProvider),
+                opencodeWeekly: lowestValue(latestOpencodeWeeklyByProvider),
+                opencodeMonthly: lowestValue(latestOpencodeMonthlyByProvider),
             };
         });
 }
@@ -1620,6 +1678,10 @@ function getProviderDisplayMetrics(provider: ProviderWithSnapshot): UsageMetric[
             ['5-hour remaining', 'weekly remaining'].includes(metric.label.toLowerCase()),
         );
         if (quotaMetrics.length) return quotaMetrics;
+    }
+
+    if (provider.kind === 'opencode' && snapshot?.metrics.length) {
+        return snapshot.metrics;
     }
 
     if (snapshot?.metrics.length) return snapshot.metrics.map((metric) => enrichCurrencyMetric(metric, snapshot));

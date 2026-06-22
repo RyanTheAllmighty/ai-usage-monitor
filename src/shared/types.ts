@@ -1,4 +1,4 @@
-export type ProviderKind = 'openai-api' | 'openrouter' | 'groq' | 'codex';
+export type ProviderKind = 'openai-api' | 'openrouter' | 'groq' | 'codex' | 'opencode';
 export type ProviderSource = 'api' | 'portal';
 export type ProviderStatus = 'healthy' | 'warning' | 'error' | 'needs-login' | 'syncing' | 'unknown';
 
@@ -144,5 +144,14 @@ export const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
         credentialLabel: 'OpenAI Codex OAuth',
         setupHint: 'Uses OpenAI Codex OAuth and the Codex usage API. A browser opens only to approve the login.',
         defaultName: 'OpenAI Codex',
+    },
+    {
+        kind: 'opencode',
+        label: 'OpenCode',
+        source: 'portal',
+        credentialLabel: 'Browser login session',
+        setupHint:
+            'A secure browser window opens so you can sign in to your OpenCode account; passwords are never stored. Tracks Zen credit balance, spend, and debit, plus Go 5-hour, weekly, and monthly remaining quotas.',
+        defaultName: 'OpenCode',
     },
 ];

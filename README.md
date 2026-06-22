@@ -14,6 +14,7 @@ AI Usage Monitor sits in your system tray and keeps a local ledger of spend, cre
 - OpenRouter: credit balance and monthly spend.
 - Groq Cloud: current spend from the authenticated Groq console.
 - OpenAI Codex: OAuth login with 5-hour and weekly quota tracking.
+- OpenCode: browser login tracking Zen credit balance, spend, and debit, plus Go 5-hour, weekly, and monthly remaining quotas.
 
 Multiple accounts per provider are supported, so work and personal usage can stay separate.
 

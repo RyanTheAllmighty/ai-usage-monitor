@@ -12,6 +12,7 @@ export function providerAccent(kind: ProviderKind): string {
         openrouter: 'from-orchid/80 to-fuchsia-300/70',
         groq: 'from-ember/90 to-rose-300/70',
         codex: 'from-sky-300/90 to-plasma/70',
+        opencode: 'from-amber-300/90 to-sky-300/70',
     }[kind];
 }
 

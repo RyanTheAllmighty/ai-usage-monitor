@@ -20,6 +20,7 @@ const CODEX_AUTH_ISSUER = 'https://auth.openai.com';
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CODEX_OAUTH_CALLBACK_PORT = 1455;
+const OPENCODE_PORTAL_URL = 'https://opencode.ai/account';
 const GROQ_REFRESH_TIMEOUT_MS = 30_000;
 const PORTAL_DEBUGGER_TIMEOUT_MS = 4_000;
 const GROQ_ACTIVITY_WAIT_MS = 8_000;
@@ -601,7 +602,10 @@ async function collectPortalSnapshot(
     const groqSpendUsd = provider.kind === 'groq' ? extractGroqSpendFromApiPayloads(apiPayloads) : null;
     const groqActivityRows = provider.kind === 'groq' ? countGroqActivityRows(apiPayloads) : 0;
 
-    const parsed = parsePortalText(provider, data.text, data.url, { groqSpendUsd });
+    const parsed = parsePortalText(provider, data.text, data.url, {
+        groqSpendUsd,
+        alertCreditRemaining: provider.alertCreditRemaining,
+    });
     logDeveloperEvent({
         provider,
         level: parsed.status === 'healthy' ? 'info' : 'warning',
@@ -653,6 +657,7 @@ function createPortalWindow(provider: ProviderRecord, hidden: boolean): BrowserW
 
 function getPortalUrl(provider: ProviderRecord): string {
     if (provider.kind === 'groq') return 'https://console.groq.com/dashboard/usage';
+    if (provider.kind === 'opencode') return OPENCODE_PORTAL_URL;
     throw new Error(`Provider ${provider.kind} does not use portal auth.`);
 }
 
@@ -660,7 +665,7 @@ export function parsePortalText(
     provider: Pick<ProviderRecord, 'id' | 'kind'>,
     text: string,
     url = '',
-    options: { groqSpendUsd?: number | null } = {},
+    options: { groqSpendUsd?: number | null; alertCreditRemaining?: number | null } = {},
 ): {
     status: 'healthy' | 'warning' | 'needs-login';
     summary: string;
@@ -690,6 +695,10 @@ export function parsePortalText(
             const context = index >= 0 ? lower.slice(Math.max(0, index - 80), index + 80) : '';
             return /usage|used|remaining|limit|quota|spend/.test(context);
         }) ?? null;
+
+    if (provider.kind === 'opencode') {
+        return parseOpenCodeDashboard(lower, options.alertCreditRemaining ?? null);
+    }
 
     if (provider.kind === 'groq') {
         const spend = options.groqSpendUsd ?? money[0] ?? null;
@@ -736,6 +745,90 @@ export function parsePortalText(
         remainingUsd: null,
         usagePercent: percent,
     };
+}
+
+function parseOpenCodeDashboard(
+    text: string,
+    alertCreditRemaining: number | null,
+): {
+    status: 'healthy' | 'warning';
+    summary: string;
+    metrics: UsageMetric[];
+    spendUsd: number | null;
+    remainingUsd: number | null;
+    usagePercent: number | null;
+} {
+    const balance = findContextualMoney(text, 'balance') ?? findContextualMoney(text, 'credit');
+    const spend = findContextualMoney(text, 'spend') ?? findContextualMoney(text, 'spent');
+    const debit = findContextualMoney(text, 'debit') ?? findContextualMoney(text, 'usage');
+    const fiveHour =
+        findPercentAfterPhrase(text, '5-hour') ??
+        findPercentAfterPhrase(text, '5 hour') ??
+        findPercentAfterPhrase(text, '5h');
+    const weekly = findPercentAfterPhrase(text, 'weekly') ?? findPercentAfterPhrase(text, 'week');
+    const monthly = findPercentAfterPhrase(text, 'monthly') ?? findPercentAfterPhrase(text, 'month');
+
+    const metrics: UsageMetric[] = [];
+    if (balance != null) {
+        const danger = alertCreditRemaining != null && balance <= alertCreditRemaining;
+        metrics.push(formatUsageUsdMetric(balance, 'Zen balance', danger ? 'warning' : 'good'));
+    }
+    if (spend != null) metrics.push(formatUsageUsdMetric(spend, 'Zen spend', 'neutral'));
+    if (debit != null) metrics.push(formatUsageUsdMetric(debit, 'Zen debit', 'neutral'));
+    if (fiveHour != null)
+        metrics.push({
+            label: 'Go 5-hour remaining',
+            value: `${fiveHour.toFixed(1)}%`,
+            tone: fiveHour <= 15 ? 'warning' : 'good',
+        });
+    if (weekly != null)
+        metrics.push({
+            label: 'Go weekly remaining',
+            value: `${weekly.toFixed(1)}%`,
+            tone: weekly <= 15 ? 'warning' : 'good',
+        });
+    if (monthly != null)
+        metrics.push({
+            label: 'Go monthly remaining',
+            value: `${monthly.toFixed(1)}%`,
+            tone: monthly <= 15 ? 'warning' : 'good',
+        });
+
+    const quotas = [fiveHour, weekly, monthly].filter((value): value is number => value != null);
+    const lowestQuota = quotas.length ? Math.min(...quotas) : null;
+    const balanceDanger = balance != null && alertCreditRemaining != null && balance <= alertCreditRemaining;
+    const quotaWarning = lowestQuota != null && lowestQuota <= 15;
+    const status: 'healthy' | 'warning' = balanceDanger || quotaWarning ? 'warning' : 'healthy';
+
+    const summaryParts: string[] = [];
+    if (balance != null) summaryParts.push(`${formatUsdPrecise(balance)} Zen balance`);
+    if (spend != null) summaryParts.push(`${formatUsdPrecise(spend)} Zen spend`);
+    if (lowestQuota != null) summaryParts.push(`${lowestQuota.toFixed(0)}% lowest Go quota remaining`);
+    const summary = summaryParts.length ? summaryParts.join(' · ') : 'OpenCode usage collected';
+
+    return {
+        status,
+        summary,
+        metrics: metrics.length ? metrics : [{ label: 'Usage', value: 'No data found', tone: 'neutral' }],
+        spendUsd: spend ?? debit ?? null,
+        remainingUsd: balance ?? null,
+        usagePercent: lowestQuota != null ? Math.max(0, Math.min(100, 100 - lowestQuota)) : null,
+    };
+}
+
+function findContextualMoney(text: string, word: string): number | undefined {
+    let from = 0;
+    while (true) {
+        const phraseIndex = text.indexOf(word, from);
+        if (phraseIndex < 0) return undefined;
+        const window = text.slice(phraseIndex, phraseIndex + 80);
+        const match = window.match(/\$\s?([0-9][0-9,]*(?:\.[0-9]+)?)/);
+        if (match) {
+            const value = Number(match[1].replaceAll(',', ''));
+            if (Number.isFinite(value)) return value;
+        }
+        from = phraseIndex + word.length;
+    }
 }
 
 function parseCodexQuotaMetrics(text: string): UsageMetric[] {
@@ -900,6 +993,16 @@ export function isPortalLoginRequired(provider: Pick<ProviderRecord, 'kind'>, ur
         const onAuthRoute = /\/login|sign-in|signin|auth|oauth/.test(lowerUrl);
         const hasAppContent = /codex|usage|remaining|limit|workspace|settings/.test(lowerText);
         if (!onChatGpt || onAuthRoute) return true;
+        return loginWords.test(lowerText) && !hasAppContent && text.length < 8000;
+    }
+
+    if (provider.kind === 'opencode') {
+        const onOpenCode = lowerUrl.includes('opencode.ai');
+        const onAuthRoute = /\/login|sign-in|signin|auth|oauth|sso/.test(lowerUrl);
+        const hasAppContent = /usage|balance|credit|quota|spend|remaining|limit|dashboard|account|zen|go/.test(
+            lowerText,
+        );
+        if (!onOpenCode || onAuthRoute) return true;
         return loginWords.test(lowerText) && !hasAppContent && text.length < 8000;
     }
 

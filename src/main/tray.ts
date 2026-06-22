@@ -75,33 +75,40 @@ export function rebuildTrayMenu(getWindow: () => BrowserWindow | null): void {
 function buildUsageItems(providers: ProviderWithSnapshot[]): MenuItemConstructorOptions[] {
     if (providers.length === 0) return [{ label: 'No providers configured', enabled: false }];
 
-    const regularProviders = providers.filter((provider) => provider.kind !== 'codex');
-    const codexProviders = providers.filter((provider) => provider.kind === 'codex');
+    const regularProviders = providers.filter((provider) => provider.kind !== 'codex' && provider.kind !== 'opencode');
+    const detailedProviders = providers.filter((provider) => provider.kind === 'codex' || provider.kind === 'opencode');
     const items: MenuItemConstructorOptions[] = regularProviders.map((provider) => ({
         label: `${provider.name}: ${menuSummary(provider.latestSnapshot)}`,
         enabled: false,
     }));
 
-    if (regularProviders.length > 0 && codexProviders.length > 0) items.push({ type: 'separator' });
+    if (regularProviders.length > 0 && detailedProviders.length > 0) items.push({ type: 'separator' });
 
-    codexProviders.forEach((provider, index) => {
+    detailedProviders.forEach((provider, index) => {
         if (index > 0) items.push({ type: 'separator' });
-        items.push({ label: `OpenAI Codex - ${provider.name}`, enabled: false });
+        if (provider.kind === 'codex') {
+            items.push({ label: `OpenAI Codex - ${provider.name}`, enabled: false });
 
-        const summary = codexMenuSummary(provider.latestSnapshot);
-        if (summary.kind === 'unavailable') {
-            items.push({ label: summary.label, enabled: false });
+            const summary = codexMenuSummary(provider.latestSnapshot);
+            if (summary.kind === 'unavailable') {
+                items.push({ label: summary.label, enabled: false });
+                return;
+            }
+
+            items.push({
+                label: `Remaining: 5-hour ${summary.fiveHour.percent} | weekly ${summary.weekly.percent}`,
+                enabled: false,
+            });
+            items.push({
+                label: `Resets: 5-hour in ${summary.fiveHour.reset} | weekly in ${summary.weekly.reset}`,
+                enabled: false,
+            });
             return;
         }
 
-        items.push({
-            label: `Remaining: 5-hour ${summary.fiveHour.percent} | weekly ${summary.weekly.percent}`,
-            enabled: false,
-        });
-        items.push({
-            label: `Resets: 5-hour in ${summary.fiveHour.reset} | weekly in ${summary.weekly.reset}`,
-            enabled: false,
-        });
+        items.push({ label: `OpenCode - ${provider.name}`, enabled: false });
+        const lines = opencodeMenuLines(provider.latestSnapshot);
+        for (const line of lines) items.push({ label: line, enabled: false });
     });
 
     return items;
@@ -152,6 +159,26 @@ function codexMenuSummary(snapshot: UsageSnapshot | null): CodexTraySummary {
 
 function findCodexMetric(metrics: UsageMetric[], phrase: string): UsageMetric | null {
     return metrics.find((metric) => metric.label.toLowerCase().includes(phrase)) ?? null;
+}
+
+function opencodeMenuLines(snapshot: UsageSnapshot | null): string[] {
+    if (!snapshot) return ['not synced'];
+    if (snapshot.status === 'needs-login') return ['login required'];
+
+    const balance = findCodexMetric(snapshot.metrics, 'zen balance')?.value;
+    const spend = findCodexMetric(snapshot.metrics, 'zen spend')?.value;
+    const fiveHour = findCodexMetric(snapshot.metrics, 'go 5-hour')?.value;
+    const weekly = findCodexMetric(snapshot.metrics, 'go weekly')?.value;
+    const monthly = findCodexMetric(snapshot.metrics, 'go monthly')?.value;
+
+    const lines: string[] = [];
+    if (balance || spend) {
+        lines.push(`Zen: ${balance ?? 'n/a'} balance · ${spend ?? 'n/a'} spend`);
+    }
+    if (fiveHour || weekly || monthly) {
+        lines.push(`Go: 5h ${fiveHour ?? 'n/a'} | weekly ${weekly ?? 'n/a'} | monthly ${monthly ?? 'n/a'}`);
+    }
+    return lines.length ? lines : [snapshot.summary];
 }
 
 function extractCodexWindows(
