@@ -77,7 +77,8 @@ export class UsageDatabase {
         last_synced_at TEXT,
         status TEXT NOT NULL,
         status_message TEXT,
-        has_secret INTEGER NOT NULL DEFAULT 0
+        has_secret INTEGER NOT NULL DEFAULT 0,
+        alert_suppressed INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS secrets (
@@ -128,6 +129,14 @@ export class UsageDatabase {
       CREATE INDEX IF NOT EXISTS idx_developer_logs_time
         ON developer_logs(created_at DESC);
     `);
+
+        this.addColumnIfMissing('providers', 'alert_suppressed', 'INTEGER NOT NULL DEFAULT 0');
+    }
+
+    private addColumnIfMissing(table: string, column: string, definition: string): void {
+        const rows = this.select(`PRAGMA table_info(${table})`);
+        const exists = rows.some((row) => String(row.name) === column);
+        if (!exists) this.conn.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
 
     private ensureSettings(): void {
@@ -168,13 +177,14 @@ export class UsageDatabase {
         alertCreditRemaining: number | null;
         alertMonthlySpend: number | null;
         hasSecret: boolean;
+        alertSuppressed?: boolean;
     }): ProviderRecord {
         const now = new Date().toISOString();
         this.conn.run(
             `INSERT INTO providers (
         id, kind, name, source, refresh_interval_minutes, alert_credit_remaining,
-        alert_monthly_spend, created_at, updated_at, status, status_message, has_secret
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        alert_monthly_spend, created_at, updated_at, status, status_message, has_secret, alert_suppressed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 input.id,
                 input.kind,
@@ -188,6 +198,7 @@ export class UsageDatabase {
                 input.source === 'portal' ? 'needs-login' : 'unknown',
                 input.source === 'portal' ? 'Sign in to start collecting portal usage data.' : null,
                 input.hasSecret ? 1 : 0,
+                input.alertSuppressed ? 1 : 0,
             ],
         );
         this.persist();
@@ -207,6 +218,7 @@ export class UsageDatabase {
                 | 'status'
                 | 'statusMessage'
                 | 'hasSecret'
+                | 'alertSuppressed'
             >
         >,
     ): ProviderRecord {
@@ -216,7 +228,7 @@ export class UsageDatabase {
             `UPDATE providers SET
         name = ?, refresh_interval_minutes = ?, alert_credit_remaining = ?,
         alert_monthly_spend = ?, updated_at = ?, last_synced_at = ?,
-        status = ?, status_message = ?, has_secret = ?
+        status = ?, status_message = ?, has_secret = ?, alert_suppressed = ?
       WHERE id = ?`,
             [
                 next.name,
@@ -228,6 +240,7 @@ export class UsageDatabase {
                 next.status,
                 next.statusMessage,
                 next.hasSecret ? 1 : 0,
+                next.alertSuppressed ? 1 : 0,
                 id,
             ],
         );
@@ -453,6 +466,7 @@ export class UsageDatabase {
             status: row.status as ProviderStatus,
             statusMessage: row.status_message == null ? null : String(row.status_message),
             hasSecret: Number(row.has_secret) === 1,
+            alertSuppressed: Number(row.alert_suppressed) === 1,
         };
     }
 

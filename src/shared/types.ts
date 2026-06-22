@@ -16,6 +16,7 @@ export interface ProviderRecord {
     status: ProviderStatus;
     statusMessage: string | null;
     hasSecret: boolean;
+    alertSuppressed: boolean;
 }
 
 export interface UsageMetric {

@@ -168,6 +168,18 @@ function registerIpc(): void {
         rebuildTrayMenu(() => mainWindow);
     });
 
+    ipcMain.handle(IPC_CHANNELS.suppressProviderAlert, (_event, id: string) => {
+        const updated = db.updateProvider(id, { alertSuppressed: true });
+        rebuildTrayMenu(() => mainWindow);
+        return updated;
+    });
+
+    ipcMain.handle(IPC_CHANNELS.unsuppressProviderAlert, (_event, id: string) => {
+        const updated = db.updateProvider(id, { alertSuppressed: false });
+        rebuildTrayMenu(() => mainWindow);
+        return updated;
+    });
+
     ipcMain.handle(IPC_CHANNELS.updateSettings, (_event, partial) => {
         const settings = db.updateSettings(partial);
         app.setLoginItemSettings({

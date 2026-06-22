@@ -18,6 +18,8 @@ export interface AiUsageMonitorApi {
     refreshAll(): Promise<UsageSnapshot[]>;
     loginProvider(id: string): Promise<void>;
     clearProviderSession(id: string): Promise<void>;
+    suppressProviderAlert(id: string): Promise<ProviderRecord>;
+    unsuppressProviderAlert(id: string): Promise<ProviderRecord>;
     updateSettings(settings: Partial<SettingsRecord>): Promise<SettingsRecord>;
     getHistory(providerId?: string): Promise<UsageSnapshot[]>;
     getDeveloperLogs(providerId?: string): Promise<DeveloperLogEntry[]>;
@@ -39,6 +41,8 @@ export const IPC_CHANNELS = {
     refreshAll: 'provider:refresh-all',
     loginProvider: 'provider:login',
     clearProviderSession: 'provider:clear-session',
+    suppressProviderAlert: 'provider:suppress-alert',
+    unsuppressProviderAlert: 'provider:unsuppress-alert',
     updateSettings: 'settings:update',
     getHistory: 'history:get',
     getDeveloperLogs: 'developer-logs:get',

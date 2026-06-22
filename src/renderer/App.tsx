@@ -17,6 +17,7 @@ import {
 import {
     Activity,
     Bell,
+    BellOff,
     Bug,
     Check,
     PanelLeftClose,
@@ -118,6 +119,14 @@ export function App(): ReactElement {
 
     const deleteProvider = useMutation({
         mutationFn: api.deleteProvider,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-state'] }),
+    });
+    const suppressAlert = useMutation({
+        mutationFn: api.suppressProviderAlert,
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-state'] }),
+    });
+    const unsuppressAlert = useMutation({
+        mutationFn: api.unsuppressProviderAlert,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-state'] }),
     });
 
@@ -248,6 +257,8 @@ export function App(): ReactElement {
                                         onRefresh={(id) => refreshOne.mutate(id)}
                                         refreshingId={refreshOne.isPending ? refreshOne.variables : undefined}
                                         onLogin={(id) => login.mutate(id)}
+                                        onSuppress={(id) => suppressAlert.mutate(id)}
+                                        onUnsuppress={(id) => unsuppressAlert.mutate(id)}
                                     />
                                 )}
                                 {currentView === 'providers' && (
@@ -258,6 +269,8 @@ export function App(): ReactElement {
                                         onRefresh={(id) => refreshOne.mutate(id)}
                                         onLogin={(id) => login.mutate(id)}
                                         onDelete={(id) => deleteProvider.mutate(id)}
+                                        onSuppress={(id) => suppressAlert.mutate(id)}
+                                        onUnsuppress={(id) => unsuppressAlert.mutate(id)}
                                     />
                                 )}
                                 {currentView === 'history' && <HistoryView state={state} />}
@@ -396,6 +409,8 @@ function Dashboard({
     onRefresh,
     refreshingId,
     onLogin,
+    onSuppress,
+    onUnsuppress,
 }: {
     state: AppState;
     totals: ReturnType<typeof summarize>;
@@ -403,6 +418,8 @@ function Dashboard({
     onRefresh: (id: string) => void;
     refreshingId?: string;
     onLogin: (id: string) => void;
+    onSuppress: (id: string) => void;
+    onUnsuppress: (id: string) => void;
 }): ReactElement {
     return (
         <div>
@@ -429,6 +446,8 @@ function Dashboard({
                             provider={provider}
                             onRefresh={onRefresh}
                             onLogin={onLogin}
+                            onSuppress={onSuppress}
+                            onUnsuppress={onUnsuppress}
                             refreshing={refreshingId === provider.id}
                         />
                     ))
@@ -511,6 +530,8 @@ function Providers({
     onRefresh,
     onLogin,
     onDelete,
+    onSuppress,
+    onUnsuppress,
 }: {
     state: AppState;
     onAdd: () => void;
@@ -518,6 +539,8 @@ function Providers({
     onRefresh: (id: string) => void;
     onLogin: (id: string) => void;
     onDelete: (id: string) => void;
+    onSuppress: (id: string) => void;
+    onUnsuppress: (id: string) => void;
 }): ReactElement {
     const queryClient = useQueryClient();
     const clearSession = useMutation({
@@ -609,6 +632,32 @@ function Providers({
                                         <RefreshCw size={16} />
                                     </Button>
                                 </IconTooltip>
+                                {['warning', 'error', 'needs-login'].includes(provider.status) &&
+                                    !provider.alertSuppressed && (
+                                        <IconTooltip label="Suppress this alarm until it clears">
+                                            <Button
+                                                variant="icon"
+                                                size="icon"
+                                                aria-label="Suppress this alarm"
+                                                onClick={() => onSuppress(provider.id)}
+                                            >
+                                                <BellOff size={16} />
+                                            </Button>
+                                        </IconTooltip>
+                                    )}
+                                {provider.alertSuppressed && (
+                                    <IconTooltip label="Alarms suppressed. Click to resume alerts.">
+                                        <Button
+                                            variant="icon"
+                                            size="icon"
+                                            className="text-ember"
+                                            aria-label="Resume alerts"
+                                            onClick={() => onUnsuppress(provider.id)}
+                                        >
+                                            <BellOff size={16} />
+                                        </Button>
+                                    </IconTooltip>
+                                )}
                                 <AlertDialog>
                                     <IconTooltip label="Delete provider">
                                         <AlertDialogTrigger asChild>
@@ -1405,17 +1454,22 @@ function ProviderRow({
     provider,
     onRefresh,
     onLogin,
+    onSuppress,
+    onUnsuppress,
     refreshing,
 }: {
     provider: ProviderWithSnapshot;
     onRefresh: (id: string) => void;
     onLogin: (id: string) => void;
+    onSuppress: (id: string) => void;
+    onUnsuppress: (id: string) => void;
     refreshing: boolean;
 }): ReactElement {
     const snapshot = provider.latestSnapshot;
     const progress = snapshot?.usagePercent == null ? null : Math.max(0, Math.min(snapshot.usagePercent, 100));
     const metrics = getProviderDisplayMetrics(provider);
     const showProgress = progress != null && provider.kind !== 'groq' && provider.kind !== 'openrouter';
+    const isAlerting = ['warning', 'error', 'needs-login'].includes(provider.status);
     return (
         <div className="group overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] transition hover:border-white/18 hover:bg-white/[0.06]">
             <div className={cn('h-1 bg-gradient-to-r', providerAccent(provider.kind))} />
@@ -1470,6 +1524,31 @@ function ProviderRow({
                             </Button>
                         </IconTooltip>
                     )}
+                    {isAlerting && !provider.alertSuppressed && (
+                        <IconTooltip label="Suppress this alarm until it clears">
+                            <Button
+                                variant="icon"
+                                size="icon"
+                                aria-label="Suppress this alarm"
+                                onClick={() => onSuppress(provider.id)}
+                            >
+                                <BellOff size={16} />
+                            </Button>
+                        </IconTooltip>
+                    )}
+                    {provider.alertSuppressed && (
+                        <IconTooltip label="Alarms suppressed. Click to resume alerts.">
+                            <Button
+                                variant="icon"
+                                size="icon"
+                                className="text-ember"
+                                aria-label="Resume alerts"
+                                onClick={() => onUnsuppress(provider.id)}
+                            >
+                                <BellOff size={16} />
+                            </Button>
+                        </IconTooltip>
+                    )}
                     <IconTooltip label={refreshing ? 'Refreshing usage' : 'Refresh usage now'}>
                         <Button
                             variant="icon"
@@ -1483,13 +1562,21 @@ function ProviderRow({
                 </div>
             </div>
             <div className="flex items-center justify-between border-t border-white/[0.06] px-5 py-3 text-xs text-mist/40">
-                <span>
-                    {provider.kind === 'codex'
-                        ? 'OAuth API source'
-                        : provider.source === 'api'
-                          ? 'API source'
-                          : 'Portal session'}{' '}
-                    · every {provider.refreshIntervalMinutes} min
+                <span className="flex items-center gap-2">
+                    <span>
+                        {provider.kind === 'codex'
+                            ? 'OAuth API source'
+                            : provider.source === 'api'
+                              ? 'API source'
+                              : 'Portal session'}{' '}
+                        · every {provider.refreshIntervalMinutes} min
+                    </span>
+                    {provider.alertSuppressed && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-ember/15 px-2 py-0.5 text-ember">
+                            <BellOff size={11} />
+                            Alarms suppressed
+                        </span>
+                    )}
                 </span>
                 <span>Last sync {formatRelative(provider.lastSyncedAt)}</span>
             </div>

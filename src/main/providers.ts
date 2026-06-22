@@ -1770,8 +1770,17 @@ function getCurrentUtcMonthCompletedDates(): string[] {
 function maybeNotify(provider: ProviderRecord, snap: UsageSnapshot): void {
     const settings = db.getSettings();
     if (!settings.notificationsEnabled) return;
-    if (!['warning', 'error', 'needs-login'].includes(snap.status)) return;
     if (!Notification.isSupported()) return;
+
+    if (snap.status === 'healthy') {
+        if (provider.alertSuppressed) {
+            db.updateProvider(provider.id, { alertSuppressed: false });
+        }
+        return;
+    }
+
+    if (!['warning', 'error', 'needs-login'].includes(snap.status)) return;
+    if (provider.alertSuppressed) return;
 
     new Notification({
         title: `${provider.name}: ${snap.status === 'needs-login' ? 'Reconnect needed' : 'Usage alert'}`,
