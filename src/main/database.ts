@@ -443,6 +443,105 @@ export class UsageDatabase {
         this.persist();
     }
 
+    importLedger(data: {
+        settings?: Record<string, unknown> | null;
+        providers?: Record<string, unknown>[] | null;
+        history?: Record<string, unknown>[] | null;
+        developerLogs?: Record<string, unknown>[] | null;
+    }): { providers: number; history: number } {
+        this.conn.run('DELETE FROM snapshots');
+        this.conn.run('DELETE FROM developer_logs');
+        this.conn.run('DELETE FROM secrets');
+        this.conn.run('DELETE FROM providers');
+        this.conn.run('DELETE FROM settings');
+
+        const merged = { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) } as Record<string, unknown>;
+        for (const key of Object.keys(DEFAULT_SETTINGS)) {
+            this.conn.run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', [
+                key,
+                JSON.stringify(merged[key]),
+            ]);
+        }
+
+        const now = new Date().toISOString();
+        for (const provider of data.providers ?? []) {
+            const source = String(provider.source ?? 'api') as ProviderSource;
+            this.conn.run(
+                `INSERT INTO providers (
+            id, kind, name, source, refresh_interval_minutes, alert_credit_remaining,
+            alert_monthly_spend, created_at, updated_at, last_synced_at, status, status_message,
+            has_secret, alert_suppressed
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    String(provider.id ?? crypto.randomUUID()),
+                    String(provider.kind ?? 'openai-api'),
+                    String(provider.name ?? 'Provider'),
+                    source,
+                    Number(provider.refreshIntervalMinutes ?? 15),
+                    provider.alertCreditRemaining == null ? null : Number(provider.alertCreditRemaining),
+                    provider.alertMonthlySpend == null ? null : Number(provider.alertMonthlySpend),
+                    String(provider.createdAt ?? now),
+                    String(provider.updatedAt ?? now),
+                    provider.lastSyncedAt == null ? null : String(provider.lastSyncedAt),
+                    source === 'portal' ? 'needs-login' : 'unknown',
+                    'Imported from ledger. Reconnect or re-enter credentials to resume syncing.',
+                    0,
+                    provider.alertSuppressed ? 1 : 0,
+                ],
+            );
+        }
+
+        for (const snapshot of data.history ?? []) {
+            this.conn.run(
+                `INSERT INTO snapshots (
+            id, provider_id, captured_at, status, summary, metrics_json, raw_json,
+            spend_usd, remaining_usd, usage_percent
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    String(snapshot.id ?? crypto.randomUUID()),
+                    String(snapshot.providerId ?? ''),
+                    String(snapshot.capturedAt ?? now),
+                    String(snapshot.status ?? 'unknown'),
+                    String(snapshot.summary ?? ''),
+                    JSON.stringify(snapshot.metrics ?? []),
+                    JSON.stringify(snapshot.raw ?? null),
+                    snapshot.spendUsd == null ? null : Number(snapshot.spendUsd),
+                    snapshot.remainingUsd == null ? null : Number(snapshot.remainingUsd),
+                    snapshot.usagePercent == null ? null : Number(snapshot.usagePercent),
+                ],
+            );
+        }
+
+        for (const log of data.developerLogs ?? []) {
+            this.conn.run(
+                `INSERT INTO developer_logs (
+            id, created_at, provider_id, provider_name, provider_kind, level, event,
+            source, method, url, status_code, duration_ms, message, request_json, response_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    String(log.id ?? crypto.randomUUID()),
+                    String(log.createdAt ?? now),
+                    log.providerId == null ? null : String(log.providerId),
+                    log.providerName == null ? null : String(log.providerName),
+                    log.providerKind == null ? null : String(log.providerKind),
+                    String(log.level ?? 'info'),
+                    String(log.event ?? ''),
+                    String(log.source ?? 'system'),
+                    log.method == null ? null : String(log.method),
+                    log.url == null ? null : String(log.url),
+                    log.statusCode == null ? null : Number(log.statusCode),
+                    log.durationMs == null ? null : Number(log.durationMs),
+                    log.message == null ? null : String(log.message),
+                    JSON.stringify(log.request ?? null),
+                    JSON.stringify(log.response ?? null),
+                ],
+            );
+        }
+
+        this.persist();
+        return { providers: data.providers?.length ?? 0, history: data.history?.length ?? 0 };
+    }
+
     private select(sql: string, params: SqlValue[] = []): Row[] {
         const stmt = this.conn.prepare(sql);
         stmt.bind(params);

@@ -22,9 +22,9 @@ import {
     Check,
     PanelLeftClose,
     PanelLeftOpen,
-    Copy,
     Database,
     Download,
+    Upload,
     Eraser,
     Clock,
     History,
@@ -1164,7 +1164,6 @@ function LogPanel({ title, value }: { title: string; value: unknown }): ReactEle
 
 function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement {
     const queryClient = useQueryClient();
-    const [copied, setCopied] = useState(false);
     const update = useMutation({
         mutationFn: api.updateSettings,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-state'] }),
@@ -1177,16 +1176,24 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
         mutationFn: api.clearAllData,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['app-state'] }),
     });
+    const exportLedger = useMutation({
+        mutationFn: api.exportLedgerFile,
+        onSuccess: (result) => {
+            if (result) toast.success(`Ledger exported to ${result.path}`);
+        },
+        onError: (error) => toast.error(error instanceof Error ? error.message : 'Export failed.'),
+    });
+    const importLedger = useMutation({
+        mutationFn: api.importLedgerFile,
+        onSuccess: (result) => {
+            if (result) toast.success(`Imported ${result.providers} providers and ${result.history} history rows.`);
+            queryClient.invalidateQueries({ queryKey: ['app-state'] });
+        },
+        onError: (error) => toast.error(error instanceof Error ? error.message : 'Import failed.'),
+    });
 
     const toggle = (key: keyof SettingsRecord) => {
         update.mutate({ [key]: !settings[key] });
-    };
-
-    const exportLedger = async () => {
-        const ledger = await api.exportLedger();
-        await navigator.clipboard.writeText(JSON.stringify(ledger, null, 2));
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1800);
     };
 
     return (
@@ -1264,11 +1271,39 @@ function SettingsView({ settings }: { settings: SettingsRecord }): ReactElement 
                         </Select>
                     </label>
                 </div>
-                <div className="mt-3 grid grid-cols-3 gap-3">
-                    <Button variant="secondary" onClick={exportLedger}>
-                        {copied ? <Check size={16} /> : <Copy size={16} />}
-                        {copied ? 'Copied export' : 'Copy ledger JSON'}
+                <div className="mt-3 grid grid-cols-4 gap-3">
+                    <Button variant="secondary" onClick={() => exportLedger.mutate()} disabled={exportLedger.isPending}>
+                        {exportLedger.isPending ? (
+                            <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                            <Download size={16} />
+                        )}
+                        Export ledger
                     </Button>
+                    <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                            <Button variant="secondary" disabled={importLedger.isPending}>
+                                <Upload size={16} />
+                                Import ledger
+                            </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                            <AlertDialogHeader>
+                                <AlertDialogTitle>Import ledger and replace all data?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                    This overwrites all current providers, settings, history, and developer logs with
+                                    the contents of the selected JSON file. Secrets are not transferred; you will need
+                                    to reconnect each provider. This cannot be undone.
+                                </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => importLedger.mutate()}>
+                                    Import and replace
+                                </AlertDialogAction>
+                            </AlertDialogFooter>
+                        </AlertDialogContent>
+                    </AlertDialog>
                     <AlertDialog>
                         <AlertDialogTrigger asChild>
                             <Button variant="secondary">

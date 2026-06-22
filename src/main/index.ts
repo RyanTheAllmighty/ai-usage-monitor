@@ -1,7 +1,8 @@
+import { z } from 'zod';
 import fs from 'node:fs';
 import path from 'node:path';
 import { optimizer } from '@electron-toolkit/utils';
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 
 import { db } from './database';
 import { vault } from './secrets';
@@ -192,13 +193,54 @@ function registerIpc(): void {
 
     ipcMain.handle(IPC_CHANNELS.getHistory, (_event, providerId?: string) => db.getHistory(providerId));
     ipcMain.handle(IPC_CHANNELS.getDeveloperLogs, (_event, providerId?: string) => db.getDeveloperLogs(providerId));
-    ipcMain.handle(IPC_CHANNELS.exportLedger, () => ({
+
+    const buildLedgerExport = () => ({
         exportedAt: new Date().toISOString(),
         settings: db.getSettings(),
         providers: db.listProvidersWithSnapshots(),
         history: db.getHistory(),
         developerLogs: db.getDeveloperLogs(),
-    }));
+    });
+
+    ipcMain.handle(IPC_CHANNELS.exportLedgerFile, async () => {
+        const options: Electron.SaveDialogOptions = {
+            defaultPath: `ai-usage-monitor-ledger-${new Date().toISOString().slice(0, 10)}.json`,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+        };
+        const result = mainWindow
+            ? await dialog.showSaveDialog(mainWindow, options)
+            : await dialog.showSaveDialog(options);
+        if (result.canceled || !result.filePath) return null;
+        fs.writeFileSync(result.filePath, JSON.stringify(buildLedgerExport(), null, 2));
+        return { path: result.filePath };
+    });
+
+    const importLedgerSchema = z.object({
+        exportedAt: z.string().optional(),
+        settings: z.record(z.string(), z.unknown()).optional().default({}),
+        providers: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+        history: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+        developerLogs: z.array(z.record(z.string(), z.unknown())).optional().default([]),
+    });
+
+    ipcMain.handle(IPC_CHANNELS.importLedgerFile, async () => {
+        const options: Electron.OpenDialogOptions = {
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+            properties: ['openFile'],
+        };
+        const result = mainWindow
+            ? await dialog.showOpenDialog(mainWindow, options)
+            : await dialog.showOpenDialog(options);
+        if (result.canceled || !result.filePaths.length) return null;
+        const text = fs.readFileSync(result.filePaths[0], 'utf8');
+        const parsed = importLedgerSchema.parse(JSON.parse(text));
+        db.importLedger(parsed);
+        const settings = db.getSettings();
+        app.setLoginItemSettings({ openAtLogin: settings.startAtLogin, openAsHidden: settings.launchMinimized });
+        rebuildTrayMenu(() => mainWindow);
+        return { providers: parsed.providers.length, history: parsed.history.length };
+    });
+
     ipcMain.handle(IPC_CHANNELS.clearHistory, (_event, providerId?: string) => {
         db.clearHistory(providerId);
         rebuildTrayMenu(() => mainWindow);

@@ -2,12 +2,16 @@ import type {
     AppState,
     CreateProviderInput,
     DeveloperLogEntry,
-    LedgerExport,
     ProviderRecord,
     SettingsRecord,
     UpdateProviderInput,
     UsageSnapshot,
 } from './types';
+
+export interface LedgerImportResult {
+    providers: number;
+    history: number;
+}
 
 export interface AiUsageMonitorApi {
     getAppState(): Promise<AppState>;
@@ -23,7 +27,8 @@ export interface AiUsageMonitorApi {
     updateSettings(settings: Partial<SettingsRecord>): Promise<SettingsRecord>;
     getHistory(providerId?: string): Promise<UsageSnapshot[]>;
     getDeveloperLogs(providerId?: string): Promise<DeveloperLogEntry[]>;
-    exportLedger(): Promise<LedgerExport>;
+    exportLedgerFile(): Promise<{ path: string } | null>;
+    importLedgerFile(): Promise<LedgerImportResult | null>;
     clearHistory(providerId?: string): Promise<void>;
     deleteHistorySnapshot(snapshotId: string): Promise<void>;
     clearDeveloperLogs(providerId?: string): Promise<void>;
@@ -46,7 +51,8 @@ export const IPC_CHANNELS = {
     updateSettings: 'settings:update',
     getHistory: 'history:get',
     getDeveloperLogs: 'developer-logs:get',
-    exportLedger: 'ledger:export',
+    exportLedgerFile: 'ledger:export-file',
+    importLedgerFile: 'ledger:import-file',
     clearHistory: 'ledger:clear-history',
     deleteHistorySnapshot: 'ledger:delete-snapshot',
     clearDeveloperLogs: 'developer-logs:clear',
