@@ -1641,31 +1641,43 @@ function AddProviderDialog({ onClose }: { onClose: () => void }): ReactElement {
                     </Button>
                 </div>
 
-                <div className="mt-6 grid grid-cols-4 gap-2">
-                    {PROVIDER_DEFINITIONS.map((item) => (
-                        <Button
-                            variant="secondary"
-                            key={item.kind}
-                            className={cn(
-                                'h-16 justify-start rounded-lg border px-3 py-3 text-left text-sm transition',
-                                item.kind === kind
-                                    ? 'border-plasma bg-plasma/12'
-                                    : 'border-white/10 bg-white/[0.035] hover:bg-white/[0.07]',
-                            )}
-                            onClick={() => {
-                                setKind(item.kind);
-                                setName(item.defaultName);
-                            }}
-                        >
-                            <span
-                                className={cn(
-                                    'h-1.5 w-10 shrink-0 rounded-full bg-gradient-to-r',
-                                    providerAccent(item.kind),
-                                )}
-                            />
-                            <span className="min-w-0 flex-1 leading-tight">{item.label}</span>
-                        </Button>
-                    ))}
+                <div className="mt-6">
+                    <div className="mb-3 text-xs tracking-wide text-mist/45 uppercase">Choose a provider</div>
+                    <div className="grid grid-cols-3 gap-3">
+                        {PROVIDER_DEFINITIONS.map((item) => {
+                            const selected = item.kind === kind;
+                            const connectionType =
+                                item.kind === 'codex' ? 'OAuth' : item.source === 'api' ? 'API key' : 'Browser login';
+                            return (
+                                <button
+                                    type="button"
+                                    key={item.kind}
+                                    aria-pressed={selected}
+                                    className={cn(
+                                        'flex items-center gap-3 rounded-lg border p-3.5 text-left transition',
+                                        selected
+                                            ? 'border-plasma bg-plasma/12'
+                                            : 'border-white/10 bg-white/[0.035] hover:border-white/18 hover:bg-white/[0.07]',
+                                    )}
+                                    onClick={() => {
+                                        setKind(item.kind);
+                                        setName(item.defaultName);
+                                    }}
+                                >
+                                    <div
+                                        className={cn(
+                                            'h-10 w-10 shrink-0 rounded-lg bg-gradient-to-br shadow-lg',
+                                            providerAccent(item.kind),
+                                        )}
+                                    />
+                                    <div className="min-w-0">
+                                        <div className="truncate text-sm leading-tight font-semibold">{item.label}</div>
+                                        <div className="mt-1 text-xs text-mist/45">{connectionType}</div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 <div className="mt-5 grid gap-4">
