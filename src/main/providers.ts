@@ -8,9 +8,14 @@ import { vault } from './secrets';
 import {
     formatUsageUsdMetric,
     formatUsdPrecise,
+    normalizeOpenCodeSsrData,
+    openCodeSsrDataIsEmpty,
     parseMoneyValues,
+    parseOpenCodeSsrData,
     parsePercentValues,
     snapshot,
+    type OpenCodeSsrData,
+    type OpenCodeWorkspace,
 } from './provider-utils';
 
 const OPENAI_COSTS_URL = 'https://api.openai.com/v1/organization/costs';
@@ -20,7 +25,10 @@ const CODEX_AUTH_ISSUER = 'https://auth.openai.com';
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 const CODEX_OAUTH_CALLBACK_PORT = 1455;
-const OPENCODE_PORTAL_URL = 'https://opencode.ai/account';
+const OPENCODE_AUTH_URL = 'https://opencode.ai/auth';
+const OPENCODE_WORKSPACE_BASE_URL = 'https://opencode.ai/workspace';
+const OPENCODE_GO_PATH = '/go';
+const OPENCODE_HYDRATION_WAIT_MS = 6_000;
 const GROQ_REFRESH_TIMEOUT_MS = 30_000;
 const PORTAL_DEBUGGER_TIMEOUT_MS = 4_000;
 const GROQ_ACTIVITY_WAIT_MS = 8_000;
@@ -554,6 +562,7 @@ function escapeHtml(value: string): string {
 }
 
 async function refreshPortal(provider: ProviderRecord): Promise<UsageSnapshot> {
+    if (provider.kind === 'opencode') return refreshOpenCodePortal(provider);
     const win = createPortalWindow(provider, true);
     let networkCapture: Awaited<ReturnType<typeof startNetworkJsonCapture>> | null = null;
     const timeout = provider.kind === 'groq' ? GROQ_REFRESH_TIMEOUT_MS : 45_000;
@@ -657,8 +666,308 @@ function createPortalWindow(provider: ProviderRecord, hidden: boolean): BrowserW
 
 function getPortalUrl(provider: ProviderRecord): string {
     if (provider.kind === 'groq') return 'https://console.groq.com/dashboard/usage';
-    if (provider.kind === 'opencode') return OPENCODE_PORTAL_URL;
+    if (provider.kind === 'opencode') return OPENCODE_AUTH_URL;
     throw new Error(`Provider ${provider.kind} does not use portal auth.`);
+}
+
+interface OpenCodeExtractedSsr {
+    raw: Record<string, unknown>;
+    url: string;
+    title: string;
+}
+
+interface OpenCodeSsrDebug {
+    url: string;
+    title: string;
+    ready: boolean;
+    totalKeys: number;
+    resolvedKeys: string[];
+    pendingKeys: string[];
+    htmlSnippet: string;
+    viewport?: string;
+}
+
+function openCodeSsrExtractionScript(waitMs: number): string {
+    return `(async function(){var max=${waitMs};var start=Date.now();var debug={url:location.href,title:document.title,ready:false,totalKeys:0,resolvedKeys:[],pendingKeys:[],htmlSnippet:(document.body&&document.body.innerText?document.body.innerText:"").slice(0,400),viewport:window.innerWidth+"x"+window.innerHeight,values:[]};function readSlot(v){if(!v)return{state:"missing"};if(v.v!==undefined)return{state:"resolved",data:v.v};if(v.p&&v.p.v!=null)return{state:"resolved",data:v.p.v};if(v.p&&typeof v.p.then==="function")return{state:"pending"};return{state:"weird"}}function take(){var r=window._$HY&&window._$HY.r;var out={};if(!r)return out;var keys=Object.keys(r);debug.totalKeys=keys.length;for(var i=0;i<keys.length;i++){var k=keys[i];var s=readSlot(r[k]);if(s.state==="resolved"){out[k]=s.data;debug.resolvedKeys.push(k);var v=s.data;var preview=typeof v==="object"?JSON.stringify(v).slice(0,120):String(v).slice(0,120);debug.values.push(preview)}else{debug.pendingKeys.push(k+":"+s.state)}}return out}while(Date.now()-start<max){var s=take();if(Object.keys(s).length>0){debug.ready=true;debug.data=s;return debug}await new Promise(function(r){setTimeout(r,100)})}take();return debug})()`;
+}
+
+async function extractOpenCodeSsr(
+    win: BrowserWindow,
+    waitMs: number,
+): Promise<OpenCodeExtractedSsr & { debug: OpenCodeSsrDebug }> {
+    const empty: OpenCodeExtractedSsr & { debug: OpenCodeSsrDebug } = {
+        raw: {},
+        url: '',
+        title: '',
+        debug: { url: '', title: '', ready: false, totalKeys: 0, resolvedKeys: [], pendingKeys: [], htmlSnippet: '' },
+    };
+    const result = (await win.webContents
+        .executeJavaScript(openCodeSsrExtractionScript(waitMs), true)
+        .catch(() => null)) as (OpenCodeSsrDebug & { data?: Record<string, unknown> }) | null;
+    if (!result) return empty;
+    const debug: OpenCodeSsrDebug = {
+        url: typeof result.url === 'string' ? result.url : win.webContents.getURL(),
+        title: typeof result.title === 'string' ? result.title : '',
+        ready: result.ready === true,
+        totalKeys: typeof result.totalKeys === 'number' ? result.totalKeys : 0,
+        resolvedKeys: Array.isArray(result.resolvedKeys) ? result.resolvedKeys : [],
+        pendingKeys: Array.isArray(result.pendingKeys) ? result.pendingKeys : [],
+        htmlSnippet: typeof result.htmlSnippet === 'string' ? result.htmlSnippet : '',
+        viewport: typeof result.viewport === 'string' ? result.viewport : '',
+    };
+    return {
+        raw: result.data && typeof result.data === 'object' ? result.data : {},
+        url: debug.url,
+        title: debug.title,
+        debug,
+    };
+}
+
+function isOpenCodeLoginRequired(url: string, title: string): boolean {
+    if (!url) return true;
+    const lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('github.com/')) return true;
+    if (lowerUrl.includes('auth.opencode.ai')) return true;
+    if (/\/login|sign[-_]?in|signin|oauth|sso/.test(lowerUrl)) return true;
+    if (/sign in|log in|continue with/i.test(title)) return true;
+    return false;
+}
+
+function findShapeMatch<T>(values: ReadonlyArray<unknown>, matcher: (value: unknown) => T | null): T | null {
+    for (const value of values) {
+        const match = matcher(value);
+        if (match !== null) return match;
+    }
+    return null;
+}
+
+function isWorkspaceRecord(value: unknown): { id: string; name: string; slug: string | null } | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.id !== 'string' || !record.id.startsWith('wrk_')) return null;
+    return {
+        id: record.id,
+        name: typeof record.name === 'string' ? record.name : record.id,
+        slug: typeof record.slug === 'string' ? record.slug : null,
+    };
+}
+
+function isWorkspacesArray(value: unknown): OpenCodeWorkspace[] | null {
+    if (!Array.isArray(value)) return null;
+    const result: OpenCodeWorkspace[] = [];
+    for (const item of value) {
+        const ws = isWorkspaceRecord(item);
+        if (ws) result.push(ws);
+    }
+    return result.length > 0 ? result : null;
+}
+
+function isBillingObject(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.customerID !== 'string' || !record.customerID.startsWith('cus_')) return null;
+    if (!('balance' in record) && !('liteSubscriptionID' in record)) return null;
+    return record;
+}
+
+function isGoSubscriptionObject(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.mine !== 'boolean') return null;
+    if (!record.rollingUsage || typeof record.rollingUsage !== 'object') return null;
+    return record;
+}
+
+function isUsageItemRecord(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.id === 'string' && record.id.startsWith('usg_') && typeof record.cost === 'number';
+}
+
+function isUsageArray(value: unknown): Array<Record<string, unknown>> | null {
+    if (!Array.isArray(value)) return null;
+    const result: Array<Record<string, unknown>> = [];
+    for (const item of value) {
+        if (isUsageItemRecord(item)) result.push(item as Record<string, unknown>);
+    }
+    return result.length > 0 ? result : null;
+}
+
+function isUserEmailString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return null;
+    return value;
+}
+
+function pickOpenCodeWorkspaceId(extracted: OpenCodeExtractedSsr): string | null {
+    const values = Object.values(extracted.raw);
+    const workspaces = findShapeMatch(values, isWorkspacesArray);
+    if (workspaces && workspaces[0]) return workspaces[0].id;
+    const match = extracted.url.match(/\/workspace\/(wrk_[A-Za-z0-9]+)/);
+    return match ? match[1] : null;
+}
+
+function buildOpenCodeSsrData(go: OpenCodeExtractedSsr, workspaceId: string): OpenCodeSsrData {
+    const values = Object.values(go.raw);
+    const billing = findShapeMatch(values, isBillingObject);
+    const goSubscription = findShapeMatch(values, isGoSubscriptionObject);
+    const workspaces = findShapeMatch(values, isWorkspacesArray) ?? [];
+    const usage = findShapeMatch(values, isUsageArray) ?? [];
+    const userEmail = findShapeMatch(values, isUserEmailString);
+    return normalizeOpenCodeSsrData({
+        workspaceId,
+        userEmail,
+        billing,
+        goSubscription,
+        usage,
+        workspaces,
+    });
+}
+
+async function refreshOpenCodePortal(provider: ProviderRecord): Promise<UsageSnapshot> {
+    const win = createPortalWindow(provider, true);
+    const startedAt = Date.now();
+    try {
+        return await withTimeout(
+            (async () => {
+                logDeveloperEvent({
+                    provider,
+                    level: 'info',
+                    event: 'opencode.refresh.start',
+                    source: 'portal',
+                    method: 'GET',
+                    url: OPENCODE_AUTH_URL,
+                    statusCode: null,
+                    durationMs: null,
+                    message: 'Loading OpenCode workspace portal.',
+                    request: { url: OPENCODE_AUTH_URL },
+                    response: null,
+                });
+                await win.loadURL(OPENCODE_AUTH_URL);
+                const initial = await extractOpenCodeSsr(win, OPENCODE_HYDRATION_WAIT_MS);
+                if (isOpenCodeLoginRequired(initial.url, initial.title)) {
+                    logDeveloperEvent({
+                        provider,
+                        level: 'warning',
+                        event: 'opencode.refresh.login-required',
+                        source: 'portal',
+                        method: 'GET',
+                        url: initial.url || OPENCODE_AUTH_URL,
+                        statusCode: null,
+                        durationMs: Date.now() - startedAt,
+                        message: 'OpenCode session not detected; sign in required.',
+                        request: null,
+                        response: { url: initial.url, title: initial.title, debug: initial.debug },
+                    });
+                    return snapshot({
+                        providerId: provider.id,
+                        status: 'needs-login',
+                        summary: 'Sign in required before usage can be collected.',
+                        metrics: [{ label: 'Session', value: 'Needs login', tone: 'warning' }],
+                        raw: { initial },
+                        spendUsd: null,
+                        remainingUsd: null,
+                        usagePercent: null,
+                    });
+                }
+                const workspaceId = pickOpenCodeWorkspaceId(initial);
+                if (!workspaceId) {
+                    logDeveloperEvent({
+                        provider,
+                        level: 'warning',
+                        event: 'opencode.refresh.no-workspace',
+                        source: 'portal',
+                        method: 'GET',
+                        url: initial.url || OPENCODE_AUTH_URL,
+                        statusCode: null,
+                        durationMs: Date.now() - startedAt,
+                        message: 'Could not find an OpenCode workspace id on the landing page.',
+                        request: null,
+                        response: {
+                            url: initial.url,
+                            title: initial.title,
+                            rawKeys: Object.keys(initial.raw),
+                            debug: initial.debug,
+                        },
+                    });
+                    return snapshot({
+                        providerId: provider.id,
+                        status: 'warning',
+                        summary: 'No OpenCode workspaces were returned by the dashboard.',
+                        metrics: [{ label: 'Status', value: 'No workspace', tone: 'warning' }],
+                        raw: { initial },
+                    });
+                }
+                const goUrl = `${OPENCODE_WORKSPACE_BASE_URL}/${workspaceId}${OPENCODE_GO_PATH}`;
+                await win.loadURL(goUrl);
+                const go = await extractOpenCodeSsr(win, OPENCODE_HYDRATION_WAIT_MS);
+                const ssr = buildOpenCodeSsrData(go, workspaceId);
+                if (openCodeSsrDataIsEmpty(ssr)) {
+                    logDeveloperEvent({
+                        provider,
+                        level: 'warning',
+                        event: 'opencode.refresh.empty',
+                        source: 'portal',
+                        method: 'GET',
+                        url: goUrl,
+                        statusCode: null,
+                        durationMs: Date.now() - startedAt,
+                        message: 'OpenCode dashboard returned no usage payload.',
+                        request: null,
+                        response: {
+                            url: go.url,
+                            title: go.title,
+                            rawKeys: Object.keys(go.raw),
+                            debug: go.debug,
+                        },
+                    });
+                    return snapshot({
+                        providerId: provider.id,
+                        status: 'warning',
+                        summary: 'OpenCode dashboard returned no usage payload.',
+                        metrics: [{ label: 'Status', value: 'No data', tone: 'warning' }],
+                        raw: { initial, go, ssr },
+                    });
+                }
+                const parsed = parseOpenCodeSsrData(ssr, { alertCreditRemaining: provider.alertCreditRemaining });
+                logDeveloperEvent({
+                    provider,
+                    level: parsed.status === 'healthy' ? 'info' : 'warning',
+                    event: 'opencode.refresh.complete',
+                    source: 'portal',
+                    method: 'GET',
+                    url: goUrl,
+                    statusCode: null,
+                    durationMs: Date.now() - startedAt,
+                    message: parsed.summary,
+                    request: { workspaceId, goUrl },
+                    response: {
+                        billingBalance: ssr.billing?.balance ?? null,
+                        goMine: ssr.goSubscription?.mine ?? null,
+                        rollingUsagePercent: ssr.goSubscription?.rollingUsage.usagePercent ?? null,
+                        weeklyUsagePercent: ssr.goSubscription?.weeklyUsage.usagePercent ?? null,
+                        monthlyUsagePercent: ssr.goSubscription?.monthlyUsage.usagePercent ?? null,
+                        usageItems: ssr.usage.length,
+                        parsedMetrics: parsed.metrics,
+                    },
+                });
+                return snapshot({
+                    providerId: provider.id,
+                    status: parsed.status,
+                    summary: parsed.summary,
+                    metrics: parsed.metrics,
+                    raw: { initial, go, ssr },
+                    spendUsd: parsed.spendUsd,
+                    remainingUsd: parsed.remainingUsd,
+                    usagePercent: parsed.usagePercent,
+                });
+            })(),
+            45_000,
+            () => 'OpenCode refresh timed out after 45 seconds. Try again, or reconnect the portal session.',
+        );
+    } finally {
+        if (!win.isDestroyed()) win.destroy();
+    }
 }
 
 export function parsePortalText(

@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    formatUsageUsdMetric,
-    formatUsd,
-    parseMoneyValues,
-    parsePercentValues,
-    redact,
-    snapshot,
-} from './provider-utils';
-import {
     extractGroqActivitySpendFromApiPayloads,
     extractGroqSpendFromApiPayloads,
     isPortalLoginRequired,
@@ -16,6 +8,18 @@ import {
     parsePortalText,
     sumOpenRouterActivityUsage,
 } from './providers';
+import {
+    formatUsageUsdMetric,
+    formatUsd,
+    normalizeOpenCodeSsrData,
+    parseMoneyValues,
+    parseOpenCodeSsrData,
+    parsePercentValues,
+    redact,
+    snapshot,
+    sumOpenCodeUsageSpend,
+    type OpenCodeSsrData,
+} from './provider-utils';
 
 describe('provider-utils', () => {
     it('formats USD values for provider summaries', () => {
@@ -187,21 +191,26 @@ describe('provider-utils', () => {
         ]);
     });
 
-    it('parses OpenCode Zen credits and Go quotas from dashboard text', () => {
-        const parsed = parsePortalText(
-            { id: 'opencode-1', kind: 'opencode' },
-            'OpenCode account Zen balance $42.50 Zen spend $7.25 Zen debit $7.25 Go 5-hour 80% remaining Go weekly 55% remaining Go monthly 90% remaining',
-            'https://opencode.ai/account',
-        );
+    it('parses OpenCode Zen balance and Go quotas from SSR data', () => {
+        const ssr = makeOpenCodeSsrData({
+            balance: 42.5,
+            goSubscription: {
+                mine: true,
+                useBalance: false,
+                rollingUsage: { status: 'ok', resetInSec: 9215, usagePercent: 20 },
+                weeklyUsage: { status: 'ok', resetInSec: 553340, usagePercent: 45 },
+                monthlyUsage: { status: 'ok', resetInSec: 2106982, usagePercent: 10 },
+            },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr);
 
         expect(parsed.status).toBe('healthy');
         expect(parsed.remainingUsd).toBe(42.5);
-        expect(parsed.spendUsd).toBe(7.25);
         expect(parsed.usagePercent).toBe(45);
         expect(parsed.metrics).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({ label: 'Zen balance', value: '$42.50' }),
-                expect.objectContaining({ label: 'Zen spend', value: '$7.25' }),
                 expect.objectContaining({ label: 'Go 5-hour remaining', value: '80.0%' }),
                 expect.objectContaining({ label: 'Go weekly remaining', value: '55.0%' }),
                 expect.objectContaining({ label: 'Go monthly remaining', value: '90.0%' }),
@@ -210,24 +219,95 @@ describe('provider-utils', () => {
     });
 
     it('flags an OpenCode warning when a Go quota is nearly exhausted', () => {
-        const parsed = parsePortalText(
-            { id: 'opencode-1', kind: 'opencode' },
-            'Zen balance $42.50 Go weekly 12% remaining',
-            'https://opencode.ai/account',
-        );
+        const ssr = makeOpenCodeSsrData({
+            balance: 42.5,
+            goSubscription: {
+                mine: true,
+                useBalance: false,
+                rollingUsage: { status: 'ok', resetInSec: 9215, usagePercent: 50 },
+                weeklyUsage: { status: 'ok', resetInSec: 553340, usagePercent: 88 },
+                monthlyUsage: { status: 'ok', resetInSec: 2106982, usagePercent: 50 },
+            },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr);
 
         expect(parsed.status).toBe('warning');
     });
 
     it('flags an OpenCode warning when Zen balance reaches the alert threshold', () => {
-        const parsed = parsePortalText(
-            { id: 'opencode-1', kind: 'opencode' },
-            'Zen balance $1.00 Go weekly 80% remaining',
-            'https://opencode.ai/account',
-            { alertCreditRemaining: 2 },
-        );
+        const ssr = makeOpenCodeSsrData({
+            balance: 1,
+            goSubscription: {
+                mine: true,
+                useBalance: false,
+                rollingUsage: { status: 'ok', resetInSec: 9215, usagePercent: 20 },
+                weeklyUsage: { status: 'ok', resetInSec: 553340, usagePercent: 50 },
+                monthlyUsage: { status: 'ok', resetInSec: 2106982, usagePercent: 50 },
+            },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr, { alertCreditRemaining: 2 });
 
         expect(parsed.status).toBe('warning');
+    });
+
+    it('reports OpenCode users without a Go subscription as healthy with no quotas', () => {
+        const ssr = makeOpenCodeSsrData({
+            balance: 25,
+            goSubscription: { mine: false, useBalance: false },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr);
+
+        expect(parsed.status).toBe('healthy');
+        expect(parsed.remainingUsd).toBe(25);
+        expect(parsed.metrics).toEqual(
+            expect.arrayContaining([expect.objectContaining({ label: 'Go', value: 'Not subscribed' })]),
+        );
+    });
+
+    it('sums OpenCode usage costs from microdollar cost values', () => {
+        const ssr = makeOpenCodeSsrData({
+            balance: 10,
+            usage: [
+                {
+                    id: 'usg_1',
+                    cost: 1_000_000,
+                    timeCreated: '2026-06-22T14:00:00.000Z',
+                    timeUpdated: '2026-06-22T14:00:00.000Z',
+                    model: 'm',
+                    provider: 'p',
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cacheReadTokens: 0,
+                    sessionID: 's',
+                    keyID: 'k',
+                    enrichment: { plan: 'lite' },
+                },
+                {
+                    id: 'usg_2',
+                    cost: 500_000,
+                    timeCreated: '2026-06-22T14:01:00.000Z',
+                    timeUpdated: '2026-06-22T14:01:00.000Z',
+                    model: 'm',
+                    provider: 'p',
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cacheReadTokens: 0,
+                    sessionID: 's',
+                    keyID: 'k',
+                    enrichment: { plan: 'lite' },
+                },
+            ],
+        });
+
+        expect(sumOpenCodeUsageSpend(ssr.usage)).toBe(1.5);
+        const parsed = parseOpenCodeSsrData(ssr);
+        expect(parsed.spendUsd).toBe(1.5);
+        expect(parsed.metrics).toEqual(
+            expect.arrayContaining([expect.objectContaining({ label: 'Recent spend', value: '$1.50' })]),
+        );
     });
 
     it('detects OpenCode login screens', () => {
@@ -237,3 +317,88 @@ describe('provider-utils', () => {
         expect(parsed.metrics[0].value).toBe('Needs login');
     });
 });
+
+interface OpenCodeSsrFixture {
+    balance?: number | null;
+    goSubscription?: {
+        mine?: boolean;
+        useBalance?: boolean;
+        rollingUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
+        weeklyUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
+        monthlyUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
+    };
+    usage?: Array<{
+        id: string;
+        cost: number;
+        timeCreated: string;
+        timeUpdated: string;
+        model: string;
+        provider: string;
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens: number;
+        cacheWrite5mTokens?: number | null;
+        sessionID: string;
+        keyID: string;
+        enrichment?: { plan: string } | null;
+    }>;
+}
+
+function makeOpenCodeSsrData(fixture: OpenCodeSsrFixture): OpenCodeSsrData {
+    const billing =
+        fixture.balance != null
+            ? {
+                  customerID: 'cus_test',
+                  balance: fixture.balance,
+                  subscriptionPlan: null,
+                  subscriptionID: null,
+                  liteSubscriptionID: 'sub_test',
+                  monthlyLimit: null,
+                  monthlyUsage: null,
+              }
+            : null;
+    const goSubscription = fixture.goSubscription
+        ? {
+              mine: fixture.goSubscription.mine ?? true,
+              useBalance: fixture.goSubscription.useBalance ?? false,
+              rollingUsage: {
+                  status: fixture.goSubscription.rollingUsage?.status ?? 'ok',
+                  resetInSec: fixture.goSubscription.rollingUsage?.resetInSec ?? 0,
+                  usagePercent: fixture.goSubscription.rollingUsage?.usagePercent ?? 0,
+              },
+              weeklyUsage: {
+                  status: fixture.goSubscription.weeklyUsage?.status ?? 'ok',
+                  resetInSec: fixture.goSubscription.weeklyUsage?.resetInSec ?? 0,
+                  usagePercent: fixture.goSubscription.weeklyUsage?.usagePercent ?? 0,
+              },
+              monthlyUsage: {
+                  status: fixture.goSubscription.monthlyUsage?.status ?? 'ok',
+                  resetInSec: fixture.goSubscription.monthlyUsage?.resetInSec ?? 0,
+                  usagePercent: fixture.goSubscription.monthlyUsage?.usagePercent ?? 0,
+              },
+          }
+        : null;
+    const usage = (fixture.usage ?? []).map((item) => ({
+        id: item.id,
+        timeCreated: item.timeCreated,
+        timeUpdated: item.timeUpdated,
+        model: item.model,
+        provider: item.provider,
+        inputTokens: item.inputTokens,
+        outputTokens: item.outputTokens,
+        cacheReadTokens: item.cacheReadTokens,
+        cacheWrite5mTokens: item.cacheWrite5mTokens ?? null,
+        cost: item.cost,
+        sessionID: item.sessionID,
+        keyID: item.keyID,
+        enrichment: item.enrichment ?? null,
+    }));
+    return normalizeOpenCodeSsrData({
+        workspaceId: 'wrk_test',
+        userEmail: 'test@example.com',
+        billing: billing as unknown as Record<string, unknown> | null,
+        goSubscription: goSubscription as unknown as Record<string, unknown> | null,
+        usage: usage as unknown as Array<Record<string, unknown>>,
+        workspaces: [{ id: 'wrk_test', name: 'Default', slug: null }],
+    });
+}
