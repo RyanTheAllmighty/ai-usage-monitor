@@ -24,6 +24,7 @@ const OPENROUTER_ACTIVITY_URL = 'https://openrouter.ai/api/v1/activity';
 const CODEX_AUTH_ISSUER = 'https://auth.openai.com';
 const CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const CODEX_RESET_CREDITS_URL = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits';
 const CODEX_OAUTH_CALLBACK_PORT = 1455;
 const OPENCODE_AUTH_URL = 'https://opencode.ai/auth';
 const OPENCODE_WORKSPACE_BASE_URL = 'https://opencode.ai/workspace';
@@ -205,36 +206,52 @@ async function refreshOpenRouter(provider: ProviderRecord): Promise<UsageSnapsho
 }
 
 async function refreshCodex(provider: ProviderRecord): Promise<UsageSnapshot> {
-    const auth = await getCodexAuth(provider);
-    const headers = codexAuthHeaders(auth);
+    let auth = await getCodexAuth(provider);
     let usage: unknown;
+    let resetCredits: unknown;
 
     try {
-        usage = await fetchJson(provider, CODEX_USAGE_URL, { headers }, 'Codex usage');
+        [usage, resetCredits] = await fetchCodexUsageAndResetCredits(provider, auth);
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!/401|unauthori[sz]ed|token|auth/i.test(message)) throw error;
 
-        const refreshed = await refreshCodexTokens(provider, auth);
-        usage = await fetchJson(provider, CODEX_USAGE_URL, { headers: codexAuthHeaders(refreshed) }, 'Codex usage');
+        auth = await refreshCodexTokens(provider, auth);
+        [usage, resetCredits] = await fetchCodexUsageAndResetCredits(provider, auth);
     }
 
-    const parsed = parseCodexUsagePayload(usage);
+    const settings = db.getSettings();
+    const parsed = parseCodexUsagePayload(usage, resetCredits, {
+        creditExpiryWarningDays: settings.codexCreditExpiryWarningDays,
+    });
     return snapshot({
         providerId: provider.id,
         status: parsed.status,
         summary: parsed.summary,
         metrics: parsed.metrics,
         raw: {
-            source: 'https://chatgpt.com/backend-api/wham/usage',
+            source: CODEX_USAGE_URL,
+            resetCreditsSource: CODEX_RESET_CREDITS_URL,
             accountId: auth.accountId ?? null,
             planType: auth.planType ?? null,
             usage,
+            resetCredits,
         },
         spendUsd: null,
         remainingUsd: null,
         usagePercent: parsed.usagePercent,
     });
+}
+
+async function fetchCodexUsageAndResetCredits(
+    provider: ProviderRecord,
+    auth: CodexAuthSecret,
+): Promise<[unknown, unknown]> {
+    const headers = codexAuthHeaders(auth);
+    return Promise.all([
+        fetchJson(provider, CODEX_USAGE_URL, { headers }, 'Codex usage'),
+        fetchJson(provider, CODEX_RESET_CREDITS_URL, { headers }, 'Codex reset credits'),
+    ]);
 }
 
 export async function loginProvider(providerId: string): Promise<void> {
@@ -1167,14 +1184,32 @@ function parseCodexQuotaMetrics(text: string): UsageMetric[] {
     return metrics;
 }
 
-export function parseCodexUsagePayload(payload: unknown): {
+interface ParsedCodexResetCredit {
+    id: string;
+    title: string;
+    status: string;
+    expiresAt: string | null;
+    expiresAtMs: number | null;
+}
+
+interface ParsedCodexResetCredits {
+    availableCount: number;
+    availableCredits: ParsedCodexResetCredit[];
+    nextExpiring: ParsedCodexResetCredit | null;
+}
+
+export function parseCodexUsagePayload(
+    payload: unknown,
+    resetCreditsPayload?: unknown,
+    options: { creditExpiryWarningDays?: number; now?: number } = {},
+): {
     status: 'healthy' | 'warning';
     summary: string;
     metrics: UsageMetric[];
     usagePercent: number | null;
 } {
     const windows = extractCodexRateLimitWindows(payload);
-    const metrics = windows.map((window) => {
+    const metrics: UsageMetric[] = windows.map((window) => {
         const remaining = Math.max(0, Math.min(100, 100 - window.usedPercent));
         return {
             label: `${window.label} remaining`,
@@ -1184,15 +1219,128 @@ export function parseCodexUsagePayload(payload: unknown): {
         };
     });
 
+    const resetCredits = parseCodexResetCreditsPayload(resetCreditsPayload);
+    if (resetCredits) {
+        metrics.push(...formatCodexResetCreditMetrics(resetCredits, options));
+    }
+
     const lowestRemaining = windows.length ? Math.min(...windows.map((window) => 100 - window.usedPercent)) : null;
+    const creditWarning = isCodexResetCreditExpiringSoon(resetCredits, options);
     return {
-        status: lowestRemaining != null && lowestRemaining <= 15 ? 'warning' : 'healthy',
-        summary: metrics.length
-            ? 'Codex quota usage collected'
-            : 'Codex usage API returned no displayable quota windows.',
+        status: (lowestRemaining != null && lowestRemaining <= 15) || creditWarning ? 'warning' : 'healthy',
+        summary: formatCodexSummary(windows.length > 0, resetCredits, options),
         metrics: metrics.length ? metrics : [{ label: 'Usage', value: 'No quota data', tone: 'neutral' }],
         usagePercent: windows[0]?.usedPercent ?? null,
     };
+}
+
+function parseCodexResetCreditsPayload(payload: unknown): ParsedCodexResetCredits | null {
+    if (payload == null) return null;
+    const body = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+    const rawCredits = Array.isArray(body.credits) ? body.credits : [];
+    const credits = rawCredits
+        .map((item) => {
+            const credit = readObject(item);
+            const status = readString(readAny(credit, ['status'])) ?? 'unknown';
+            const expiresAt = readString(readAny(credit, ['expires_at', 'expiresAt']));
+            const expiresAtMs = expiresAt ? Date.parse(expiresAt) : Number.NaN;
+            return {
+                id: readString(readAny(credit, ['id'])) ?? '',
+                title: readString(readAny(credit, ['title'])) ?? 'Rate limit reset',
+                status,
+                expiresAt,
+                expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : null,
+            };
+        })
+        .filter((credit) => credit.status === 'available');
+    const availableCount = readNumber(readAny(body, ['available_count', 'availableCount'])) ?? credits.length;
+    const expiring = credits
+        .filter((credit) => credit.expiresAtMs != null)
+        .sort((a, b) => (a.expiresAtMs ?? 0) - (b.expiresAtMs ?? 0));
+
+    return {
+        availableCount,
+        availableCredits: expiring,
+        nextExpiring: expiring[0] ?? null,
+    };
+}
+
+function formatCodexResetCreditMetrics(
+    resetCredits: ParsedCodexResetCredits,
+    options: { creditExpiryWarningDays?: number; now?: number },
+): UsageMetric[] {
+    const expiry = resetCredits.nextExpiring;
+    const metrics: UsageMetric[] = [
+        {
+            label: 'Reset credits',
+            value: String(resetCredits.availableCount),
+            tone: resetCredits.availableCount > 0 ? 'good' : 'neutral',
+            tooltip: formatCodexResetCreditsTooltip(resetCredits, options.now),
+        },
+    ];
+    if (expiry?.expiresAtMs != null) {
+        const expiringSoon = isCodexResetCreditExpiringSoon(resetCredits, options);
+        metrics.push({
+            label: 'Next credit expiry',
+            value: formatCodexCreditExpiry(expiry.expiresAtMs, options.now),
+            tone: expiringSoon ? 'warning' : 'neutral',
+            tooltip: `Expires ${new Date(expiry.expiresAtMs).toLocaleString()}`,
+        });
+    }
+    return metrics;
+}
+
+function formatCodexResetCreditsTooltip(resetCredits: ParsedCodexResetCredits, now = Date.now()): string | undefined {
+    if (resetCredits.availableCount <= 0) return undefined;
+    if (!resetCredits.availableCredits.length) return `${resetCredits.availableCount} available`;
+    return `${resetCredits.availableCount} available: ${resetCredits.availableCredits
+        .map((credit) => formatCodexCreditExpiryDetail(credit.expiresAtMs, now))
+        .join(', ')}`;
+}
+
+function formatCodexSummary(
+    hasMetrics: boolean,
+    resetCredits: ParsedCodexResetCredits | null,
+    options: { creditExpiryWarningDays?: number; now?: number },
+): string {
+    const quota = hasMetrics ? 'Codex quota usage collected' : 'Codex usage API returned no displayable quota windows.';
+    if (!resetCredits) return quota;
+    if (resetCredits.availableCount <= 0) return `${quota}; no reset credits available`;
+    const expiry = resetCredits.nextExpiring?.expiresAtMs;
+    if (expiry == null) return `${quota}; ${resetCredits.availableCount} reset credits available`;
+    const prefix = isCodexResetCreditExpiringSoon(resetCredits, options) ? 'reset credit expires' : 'next reset credit';
+    return `${quota}; ${resetCredits.availableCount} reset credits available, ${prefix} ${formatCodexCreditExpiry(
+        expiry,
+        options.now,
+    )}`;
+}
+
+function isCodexResetCreditExpiringSoon(
+    resetCredits: ParsedCodexResetCredits | null,
+    options: { creditExpiryWarningDays?: number; now?: number },
+): boolean {
+    const expiry = resetCredits?.nextExpiring?.expiresAtMs;
+    if (expiry == null || (resetCredits?.availableCount ?? 0) <= 0) return false;
+    const thresholdDays = Math.max(0, options.creditExpiryWarningDays ?? 7);
+    return expiry - (options.now ?? Date.now()) <= thresholdDays * 86_400_000;
+}
+
+function formatCodexCreditExpiry(expiresAtMs: number, now = Date.now()): string {
+    const deltaMs = expiresAtMs - now;
+    if (deltaMs <= 0) return 'now';
+    const hours = Math.ceil(deltaMs / 3_600_000);
+    if (hours < 24) return `in ${hours}h`;
+    const days = Math.ceil(deltaMs / 86_400_000);
+    return `in ${days}d`;
+}
+
+function formatCodexCreditExpiryDetail(expiresAtMs: number | null, now = Date.now()): string {
+    if (expiresAtMs == null) return 'expiry unknown';
+    const relative = formatCodexCreditExpiry(expiresAtMs, now).replace(/(\d+)d$/, (_match, days: string) =>
+        Number(days) === 1 ? '1 day' : `${days} days`,
+    );
+    const date = new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' }).format(new Date(expiresAtMs));
+    return `${relative} (${date})`;
 }
 
 function extractCodexRateLimitWindows(

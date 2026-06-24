@@ -1458,7 +1458,7 @@ function SettingsView({
                         )}
                     </div>
                 </SettingRow>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-4 gap-3">
                     <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
                         Default refresh interval
                         <Input
@@ -1483,6 +1483,17 @@ function SettingsView({
                                 <SelectItem value="system">System</SelectItem>
                             </SelectContent>
                         </Select>
+                    </label>
+                    <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
+                        Codex credit expiry alert
+                        <Input
+                            value={settings.codexCreditExpiryWarningDays}
+                            onChange={(event) =>
+                                update.mutate({
+                                    codexCreditExpiryWarningDays: Math.max(0, Number(event.target.value) || 7),
+                                })
+                            }
+                        />
                     </label>
                     <label className="glass-soft grid gap-2 rounded-lg p-5 text-sm text-mist/58">
                         Default history range
@@ -1984,10 +1995,12 @@ function getProviderDisplayMetrics(provider: ProviderWithSnapshot): UsageMetric[
     }
 
     if (provider.kind === 'codex' && snapshot?.metrics.length) {
-        const quotaMetrics = snapshot.metrics.filter((metric) =>
-            ['5-hour remaining', 'weekly remaining'].includes(metric.label.toLowerCase()),
+        const codexMetrics = snapshot.metrics.filter((metric) =>
+            ['reset credits', 'next credit expiry', '5-hour remaining', 'weekly remaining'].includes(
+                metric.label.toLowerCase(),
+            ),
         );
-        if (quotaMetrics.length) return quotaMetrics;
+        if (codexMetrics.length) return codexMetrics;
     }
 
     if (provider.kind === 'opencode' && snapshot?.metrics.length) {

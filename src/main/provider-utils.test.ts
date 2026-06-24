@@ -191,6 +191,92 @@ describe('provider-utils', () => {
         ]);
     });
 
+    it('adds Codex reset credit availability and expiry metrics', () => {
+        const parsed = parseCodexUsagePayload(
+            {
+                rate_limit: {
+                    primary_window: { used_percent: 18, window_minutes: 300, reset_at: 1777248000 },
+                    secondary_window: { used_percent: 49, window_minutes: 10080, reset_at: 1777852800 },
+                },
+            },
+            {
+                credits: [
+                    {
+                        id: 'RateLimitResetCredit_12e4596be86881919ddb39558530c95d',
+                        reset_type: 'codex_rate_limits',
+                        status: 'available',
+                        granted_at: '2026-06-12T02:20:23.543296Z',
+                        expires_at: '2026-07-12T02:20:23.543296Z',
+                        title: 'One free rate limit reset',
+                    },
+                    {
+                        id: 'RateLimitResetCredit_9305ee0c2ab8819180bd71b0826ccc86',
+                        reset_type: 'codex_rate_limits',
+                        status: 'available',
+                        granted_at: '2026-06-18T00:27:49.240448Z',
+                        expires_at: '2026-07-18T00:27:49.240448Z',
+                        title: 'One free rate limit reset',
+                    },
+                ],
+                available_count: 2,
+                total_earned_count: 0,
+            },
+            { creditExpiryWarningDays: 7, now: Date.parse('2026-06-24T00:00:00.000Z') },
+        );
+
+        expect(parsed.status).toBe('healthy');
+        expect(parsed.summary).toContain('2 reset credits available');
+        expect(parsed.metrics).toEqual(
+            expect.arrayContaining([
+                {
+                    label: 'Reset credits',
+                    value: '2',
+                    tone: 'good',
+                    tooltip: expect.stringMatching(/July 12|12 July/),
+                },
+                {
+                    label: 'Next credit expiry',
+                    value: 'in 19d',
+                    tone: 'neutral',
+                    tooltip: expect.any(String),
+                },
+            ]),
+        );
+        expect(parsed.metrics.find((metric) => metric.label === 'Reset credits')?.tooltip).toMatch(/July 18|18 July/);
+    });
+
+    it('warns when a Codex reset credit expires inside the configured window', () => {
+        const parsed = parseCodexUsagePayload(
+            {
+                rate_limit: {
+                    primary_window: { used_percent: 18, window_minutes: 300, reset_at: 1777248000 },
+                },
+            },
+            {
+                credits: [
+                    {
+                        status: 'available',
+                        expires_at: '2026-06-29T00:00:00.000Z',
+                    },
+                ],
+                available_count: 1,
+            },
+            { creditExpiryWarningDays: 7, now: Date.parse('2026-06-24T00:00:00.000Z') },
+        );
+
+        expect(parsed.status).toBe('warning');
+        expect(parsed.metrics).toEqual(
+            expect.arrayContaining([
+                {
+                    label: 'Next credit expiry',
+                    value: 'in 5d',
+                    tone: 'warning',
+                    tooltip: expect.any(String),
+                },
+            ]),
+        );
+    });
+
     it('parses OpenCode Zen balance and Go quotas from SSR data', () => {
         const ssr = makeOpenCodeSsrData({
             balance: 42.5,

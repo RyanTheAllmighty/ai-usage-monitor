@@ -23,6 +23,7 @@ const DEFAULT_SETTINGS: SettingsRecord = {
     theme: 'system',
     defaultRefreshIntervalMinutes: 15,
     defaultHistoryDays: 30,
+    codexCreditExpiryWarningDays: 7,
     developmentMode: false,
 };
 

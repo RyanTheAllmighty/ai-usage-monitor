@@ -103,6 +103,12 @@ function buildUsageItems(providers: ProviderWithSnapshot[]): MenuItemConstructor
                 label: `Resets: 5-hour in ${summary.fiveHour.reset} | weekly in ${summary.weekly.reset}`,
                 enabled: false,
             });
+            if (summary.resetCredits) {
+                items.push({
+                    label: formatResetCreditsTrayLabel(summary.resetCredits),
+                    enabled: false,
+                });
+            }
             return;
         }
 
@@ -125,8 +131,13 @@ type CodexTrayQuota = {
     reset: string;
 };
 
+type CodexTrayResetCredits = {
+    availableCount: number;
+    expiries: string[];
+};
+
 type CodexTraySummary =
-    | { kind: 'ready'; fiveHour: CodexTrayQuota; weekly: CodexTrayQuota }
+    | { kind: 'ready'; fiveHour: CodexTrayQuota; weekly: CodexTrayQuota; resetCredits: CodexTrayResetCredits | null }
     | { kind: 'unavailable'; label: string };
 
 function codexMenuSummary(snapshot: UsageSnapshot | null): CodexTraySummary {
@@ -154,6 +165,7 @@ function codexMenuSummary(snapshot: UsageSnapshot | null): CodexTraySummary {
             percent: weeklyPercent,
             reset: formatWeeklyReset(weeklyWindow?.resetsAt),
         },
+        resetCredits: extractCodexResetCredits(snapshot),
     };
 }
 
@@ -220,6 +232,36 @@ function extractCodexWindows(
     return windows;
 }
 
+function extractCodexResetCredits(snapshot: UsageSnapshot): CodexTrayResetCredits | null {
+    const raw = readObject(snapshot.raw);
+    const payload = readObject(readAny(raw, ['resetCredits', 'reset_credits']));
+    if (!Object.keys(payload).length) return null;
+
+    const credits = Array.isArray(payload.credits) ? payload.credits : [];
+    const available = credits
+        .map((item) => readObject(item))
+        .filter((credit) => readString(readAny(credit, ['status'])) === 'available');
+    const availableCount = readNumber(readAny(payload, ['available_count', 'availableCount'])) ?? available.length;
+    const expiries = available
+        .map((credit) => readString(readAny(credit, ['expires_at', 'expiresAt'])))
+        .filter((value): value is string => Boolean(value))
+        .map((value) => Date.parse(value))
+        .filter((value) => Number.isFinite(value))
+        .sort((a, b) => a - b)
+        .map((value) => `${formatCreditExpiry(value)} (${formatCreditExpiryDate(value)})`);
+
+    return {
+        availableCount,
+        expiries,
+    };
+}
+
+function formatResetCreditsTrayLabel(resetCredits: CodexTrayResetCredits): string {
+    const base = `Reset credits: ${resetCredits.availableCount} available`;
+    if (!resetCredits.expiries.length) return base;
+    return `${base}, ${resetCredits.expiries.join(', ')}`;
+}
+
 function parseCodexWindow(
     window: Record<string, unknown>,
     fallbackLabel: string,
@@ -273,6 +315,20 @@ function formatWeeklyReset(resetAt: number | null | undefined): string {
     if (hours > 0) parts.push(`${hours}h`);
     if (remainingMinutes > 0 || parts.length === 0) parts.push(`${remainingMinutes}m`);
     return parts.join(' ');
+}
+
+function formatCreditExpiry(expiresAtMs: number): string {
+    const minutes = Math.ceil((expiresAtMs - Date.now()) / 60_000);
+    if (minutes <= 0) return 'now';
+    if (minutes < 60) return `in ${minutes}m`;
+    const hours = Math.ceil(minutes / 60);
+    if (hours < 24) return `in ${hours}h`;
+    const days = Math.ceil(hours / 24);
+    return `in ${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
+function formatCreditExpiryDate(expiresAtMs: number): string {
+    return new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' }).format(new Date(expiresAtMs));
 }
 
 function minutesUntil(resetAt: number | null | undefined): number | null {

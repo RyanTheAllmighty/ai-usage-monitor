@@ -51,6 +51,7 @@ export interface SettingsRecord {
     theme: 'dark' | 'light' | 'system';
     defaultRefreshIntervalMinutes: number;
     defaultHistoryDays: number;
+    codexCreditExpiryWarningDays: number;
     developmentMode: boolean;
 }
 

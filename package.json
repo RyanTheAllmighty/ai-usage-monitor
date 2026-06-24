@@ -1,6 +1,6 @@
 {
     "name": "ai-usage-monitor",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "A local-first desktop tray app for monitoring AI provider usage.",
     "author": "AI Usage Monitor",
     "main": "out/main/index.js",
