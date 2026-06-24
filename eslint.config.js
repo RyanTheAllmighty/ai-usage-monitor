@@ -1,9 +1,8 @@
 import js from '@eslint/js';
 import globals from 'globals';
-import react from 'eslint-plugin-react';
 import tseslint from 'typescript-eslint';
+import reactX from 'eslint-plugin-react-x';
 import vitest from '@vitest/eslint-plugin';
-import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 import perfectionist from 'eslint-plugin-perfectionist';
 import reactCompiler from 'eslint-plugin-react-compiler';
@@ -48,20 +47,8 @@ export default tseslint.config(
     },
     {
         files: ['src/renderer/**/*.{ts,tsx}'],
-        ...react.configs.flat.recommended,
-        settings: {
-            react: {
-                version: 'detect',
-            },
-        },
-    },
-    {
-        files: ['src/renderer/**/*.{ts,tsx}'],
-        ...react.configs.flat['jsx-runtime'],
-        rules: {
-            ...react.configs.flat['jsx-runtime'].rules,
-            'react/prop-types': 'off',
-        },
+        ...reactX.configs.recommended,
+        ...reactX.configs['disable-conflict-eslint-plugin-react-hooks'],
     },
     {
         files: ['**/*.test.{ts,tsx}'],
@@ -81,13 +68,10 @@ export default tseslint.config(
     {
         plugins: {
             'react-compiler': reactCompiler,
-            'react-hooks': reactHooks,
             'react-refresh': reactRefresh,
         },
         rules: {
             'react-compiler/react-compiler': 'warn',
-            'react-hooks/exhaustive-deps': 'warn',
-            'react-hooks/rules-of-hooks': 'error',
             'react-refresh/only-export-components': 'off',
         },
     },
