@@ -28,7 +28,7 @@ Multiple accounts per provider are supported, so work and personal usage can sta
 
 ## Install
 
-Download the latest installer from [Releases](../../releases).
+Download the latest installer from the [latest release](https://github.com/RyanTheAllmighty/ai-usage-monitor/releases/latest).
 
 ## Development
 

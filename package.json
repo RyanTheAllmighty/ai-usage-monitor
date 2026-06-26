@@ -96,7 +96,7 @@
     "build": {
         "appId": "com.aiusagemonitor.desktop",
         "productName": "AI Usage Monitor",
-        "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+        "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
         "directories": {
             "output": "release"
         },
