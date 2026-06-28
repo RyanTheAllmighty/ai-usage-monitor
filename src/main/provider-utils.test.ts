@@ -304,6 +304,46 @@ describe('provider-utils', () => {
         );
     });
 
+    it('attaches reset tooltips to OpenCode Go quota metrics when resetInSec is provided', () => {
+        const ssr = makeOpenCodeSsrData({
+            balance: 10,
+            goSubscription: {
+                mine: true,
+                useBalance: false,
+                rollingUsage: { status: 'ok', resetInSec: 9215, usagePercent: 20 },
+                weeklyUsage: { status: 'ok', resetInSec: 553340, usagePercent: 45 },
+                monthlyUsage: { status: 'ok', resetInSec: 2106982, usagePercent: 10 },
+            },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr);
+
+        for (const label of ['Go 5-hour remaining', 'Go weekly remaining', 'Go monthly remaining']) {
+            const metric = parsed.metrics.find((m) => m.label === label);
+            expect(metric?.tooltip).toMatch(/^Resets /);
+        }
+    });
+
+    it('omits the reset tooltip from OpenCode Go metrics when resetInSec is missing', () => {
+        const ssr = makeOpenCodeSsrData({
+            balance: 10,
+            goSubscription: {
+                mine: true,
+                useBalance: false,
+                rollingUsage: { status: 'ok', resetInSec: null, usagePercent: 20 },
+                weeklyUsage: { status: 'ok', resetInSec: null, usagePercent: 45 },
+                monthlyUsage: { status: 'ok', resetInSec: null, usagePercent: 10 },
+            },
+        });
+
+        const parsed = parseOpenCodeSsrData(ssr);
+
+        for (const label of ['Go 5-hour remaining', 'Go weekly remaining', 'Go monthly remaining']) {
+            const metric = parsed.metrics.find((m) => m.label === label);
+            expect(metric?.tooltip).toBeUndefined();
+        }
+    });
+
     it('flags an OpenCode warning when a Go quota is nearly exhausted', () => {
         const ssr = makeOpenCodeSsrData({
             balance: 42.5,
@@ -409,9 +449,9 @@ interface OpenCodeSsrFixture {
     goSubscription?: {
         mine?: boolean;
         useBalance?: boolean;
-        rollingUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
-        weeklyUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
-        monthlyUsage?: { status?: string; resetInSec?: number; usagePercent?: number };
+        rollingUsage?: { status?: string; resetInSec?: number | null; usagePercent?: number };
+        weeklyUsage?: { status?: string; resetInSec?: number | null; usagePercent?: number };
+        monthlyUsage?: { status?: string; resetInSec?: number | null; usagePercent?: number };
     };
     usage?: Array<{
         id: string;
@@ -449,17 +489,26 @@ function makeOpenCodeSsrData(fixture: OpenCodeSsrFixture): OpenCodeSsrData {
               useBalance: fixture.goSubscription.useBalance ?? false,
               rollingUsage: {
                   status: fixture.goSubscription.rollingUsage?.status ?? 'ok',
-                  resetInSec: fixture.goSubscription.rollingUsage?.resetInSec ?? 0,
+                  resetInSec:
+                      fixture.goSubscription.rollingUsage?.resetInSec !== undefined
+                          ? fixture.goSubscription.rollingUsage.resetInSec
+                          : 0,
                   usagePercent: fixture.goSubscription.rollingUsage?.usagePercent ?? 0,
               },
               weeklyUsage: {
                   status: fixture.goSubscription.weeklyUsage?.status ?? 'ok',
-                  resetInSec: fixture.goSubscription.weeklyUsage?.resetInSec ?? 0,
+                  resetInSec:
+                      fixture.goSubscription.weeklyUsage?.resetInSec !== undefined
+                          ? fixture.goSubscription.weeklyUsage.resetInSec
+                          : 0,
                   usagePercent: fixture.goSubscription.weeklyUsage?.usagePercent ?? 0,
               },
               monthlyUsage: {
                   status: fixture.goSubscription.monthlyUsage?.status ?? 'ok',
-                  resetInSec: fixture.goSubscription.monthlyUsage?.resetInSec ?? 0,
+                  resetInSec:
+                      fixture.goSubscription.monthlyUsage?.resetInSec !== undefined
+                          ? fixture.goSubscription.monthlyUsage.resetInSec
+                          : 0,
                   usagePercent: fixture.goSubscription.monthlyUsage?.usagePercent ?? 0,
               },
           }

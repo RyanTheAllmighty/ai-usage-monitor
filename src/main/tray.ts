@@ -6,6 +6,8 @@ import type { ProviderWithSnapshot, UsageMetric, UsageSnapshot } from '../shared
 
 import { db } from './database';
 import { refreshAllProviders } from './providers';
+import { opencodeMenuLines } from './tray-opencode';
+import { formatFiveHourReset, formatWeeklyReset } from './tray-utils';
 
 let tray: Tray | null = null;
 
@@ -173,26 +175,6 @@ function findCodexMetric(metrics: UsageMetric[], phrase: string): UsageMetric | 
     return metrics.find((metric) => metric.label.toLowerCase().includes(phrase)) ?? null;
 }
 
-function opencodeMenuLines(snapshot: UsageSnapshot | null): string[] {
-    if (!snapshot) return ['not synced'];
-    if (snapshot.status === 'needs-login') return ['login required'];
-
-    const balance = findCodexMetric(snapshot.metrics, 'zen balance')?.value;
-    const spend = findCodexMetric(snapshot.metrics, 'zen spend')?.value;
-    const fiveHour = findCodexMetric(snapshot.metrics, 'go 5-hour')?.value;
-    const weekly = findCodexMetric(snapshot.metrics, 'go weekly')?.value;
-    const monthly = findCodexMetric(snapshot.metrics, 'go monthly')?.value;
-
-    const lines: string[] = [];
-    if (balance || spend) {
-        lines.push(`Zen: ${balance ?? 'n/a'} balance · ${spend ?? 'n/a'} spend`);
-    }
-    if (fiveHour || weekly || monthly) {
-        lines.push(`Go: 5h ${fiveHour ?? 'n/a'} | weekly ${weekly ?? 'n/a'} | monthly ${monthly ?? 'n/a'}`);
-    }
-    return lines.length ? lines : [snapshot.summary];
-}
-
 function extractCodexWindows(
     snapshot: UsageSnapshot,
 ): Array<{ label: string; remainingPercent: number; resetsAt: number | null }> {
@@ -292,31 +274,6 @@ function formatRemainingPercent(value: number | undefined): string | null {
     return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
 }
 
-function formatFiveHourReset(resetAt: number | null | undefined): string {
-    const minutes = minutesUntil(resetAt);
-    if (minutes == null) return 'unknown';
-    if (minutes <= 0) return 'now';
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-}
-
-function formatWeeklyReset(resetAt: number | null | undefined): string {
-    const minutes = minutesUntil(resetAt);
-    if (minutes == null) return 'unknown';
-    if (minutes <= 0) return 'now';
-
-    const days = Math.floor(minutes / 1440);
-    const hours = Math.floor((minutes % 1440) / 60);
-    const remainingMinutes = minutes % 60;
-    const parts: string[] = [];
-    if (days > 0) parts.push(`${days}d`);
-    if (hours > 0) parts.push(`${hours}h`);
-    if (remainingMinutes > 0 || parts.length === 0) parts.push(`${remainingMinutes}m`);
-    return parts.join(' ');
-}
-
 function formatCreditExpiry(expiresAtMs: number): string {
     const minutes = Math.ceil((expiresAtMs - Date.now()) / 60_000);
     if (minutes <= 0) return 'now';
@@ -329,11 +286,6 @@ function formatCreditExpiry(expiresAtMs: number): string {
 
 function formatCreditExpiryDate(expiresAtMs: number): string {
     return new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' }).format(new Date(expiresAtMs));
-}
-
-function minutesUntil(resetAt: number | null | undefined): number | null {
-    if (resetAt == null) return null;
-    return Math.ceil((resetAt * 1000 - Date.now()) / 60_000);
 }
 
 function readAny(object: Record<string, unknown>, keys: string[]): unknown {

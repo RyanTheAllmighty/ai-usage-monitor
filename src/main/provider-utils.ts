@@ -306,6 +306,7 @@ export function parseOpenCodeSsrData(
                 label: 'Go 5-hour remaining',
                 value: `${rolling.toFixed(1)}%`,
                 tone: rolling <= OPENCODE_GO_LOW_WARNING_PERCENT ? 'warning' : 'good',
+                tooltip: formatOpenCodeResetTooltip(data.goSubscription.rollingUsage.resetInSec),
             });
             remainingPercentages.push(rolling);
         }
@@ -314,6 +315,7 @@ export function parseOpenCodeSsrData(
                 label: 'Go weekly remaining',
                 value: `${weekly.toFixed(1)}%`,
                 tone: weekly <= OPENCODE_GO_LOW_WARNING_PERCENT ? 'warning' : 'good',
+                tooltip: formatOpenCodeResetTooltip(data.goSubscription.weeklyUsage.resetInSec),
             });
             remainingPercentages.push(weekly);
         }
@@ -322,6 +324,7 @@ export function parseOpenCodeSsrData(
                 label: 'Go monthly remaining',
                 value: `${monthly.toFixed(1)}%`,
                 tone: monthly <= OPENCODE_GO_LOW_WARNING_PERCENT ? 'warning' : 'good',
+                tooltip: formatOpenCodeResetTooltip(data.goSubscription.monthlyUsage.resetInSec),
             });
             remainingPercentages.push(monthly);
         }
@@ -352,6 +355,12 @@ export function parseOpenCodeSsrData(
 function remainingPercentFromUsed(usedPercent: number | null | undefined): number | null {
     if (usedPercent == null || !Number.isFinite(usedPercent)) return null;
     return Math.max(0, Math.min(100, 100 - usedPercent));
+}
+
+function formatOpenCodeResetTooltip(resetInSec: number | null | undefined): string | undefined {
+    if (resetInSec == null || !Number.isFinite(resetInSec)) return undefined;
+    if (resetInSec <= 0) return 'Resets now';
+    return `Resets ${new Date(Date.now() + resetInSec * 1000).toLocaleString()}`;
 }
 
 export function sumOpenCodeUsageSpend(usage: ReadonlyArray<OpenCodeUsageItem>): number | null {
